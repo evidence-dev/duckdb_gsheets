@@ -42,11 +42,16 @@ CREATE SECRET (
     TOKEN '<your_token>'
 );
 
--- OR create a non-expiring secret with your Google API private key 
--- (boring, see "Getting a Google API Access Private Key" below)
--- Note that private key is in the format:
--- -----BEGIN PRIVATE KEY-----\n ... -----END PRIVATE KEY-----\n
-CREATE SECRET (TYPE gsheet, PROVIDER private_key, EMAIL '<service_account_email>', SECRET '<your_private_key>');
+
+-- OR create a non-expiring JSON secret with your Google API private key 
+-- (This enables use in non-interactive workflows like data pipelines)
+-- (see "Getting a Google API Access Private Key" below)
+CREATE SECRET (
+    TYPE gsheet, 
+    PROVIDER private_key, 
+    FILENAME '<path_to_JSON_file_with_private_key>'
+);
+
 ```
 
 ### Read
@@ -128,10 +133,14 @@ This token will periodically expire - you can re-run the above command again to 
 
 Follow steps 1-9 above to get a JSON file with your private key inside.
 
-Use the value in the `"private_key"` field as the `SECRET` parameter.
-It will be in the format `-----BEGIN PRIVATE KEY-----\n ... -----END PRIVATE KEY-----\n`
+Include the path to the file as the `FILENAME` parameter when creating a secret.
+The recommendation is to use an absolute path, not a relative one, and to store it in the `~/.duckdb` folder.
+You will need to be able to access this file while querying GSheets (its content are not persisted. Later versions of this extension may enable that.)
+Ex: `CREATE SECRET (TYPE gsheet, PROVIDER private_key, FILENAME '<path_to_JSON_file_with_private_key>');`
 
-Folow steps 13 and 14.
+You can skip steps 10, 11, and 12 since this extension will convert from your JSON file to a token on your behalf!
+
+Follow steps 13 and 14.
 
 This private key by default will not expire. Use caution with it. 
 
