@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 3.5)
 set(TARGET_NAME gsheets)
 
 # Find OpenSSL package
-find_package(OpenSSL REQUIRED)
+find_package(OpenSSL REQUIRED CONFIG)
 
 set(EXTENSION_NAME ${TARGET_NAME}_extension)
 set(LOADABLE_EXTENSION_NAME ${TARGET_NAME}_loadable_extension)
