@@ -105,6 +105,7 @@ This token will periodically expire - you can re-run the above command again to 
 
 ## Limitations / Known Issues
 
+- DuckDB WASM is not (yet) supported.
 - Google Sheets has a limit of 10,000,000 cells per spreadsheet.
 - Reading sheets where data does not start in A1 is not yet supported.
 - Writing data to a sheet starting from a cell other than A1 is not yet supported.
