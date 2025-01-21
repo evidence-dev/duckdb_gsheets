@@ -151,28 +151,13 @@ namespace duckdb
 
         std::string token;
 
-
         auto options = bind_data.Cast<GSheetWriteBindData>().options;
 
-        if (secret.GetProvider() == "private_key") {
+        if (secret.GetProvider() == "key_file") {
             // If using a private key, retrieve the private key from the secret, but convert it 
             // into a token before use. This is an extra request per Google Sheet read or copy.
             // The secret is the JSON file that is extracted from Google as per the README
-            
-
-            Value client_email_value;
-            if (!kv_secret->TryGetValue("client_email", client_email_value)) {
-                throw InvalidInputException("'client_email' not found in 'gsheet' secret");
-            }
-            std::string client_email_string = client_email_value.ToString();
-
-            Value sheets_private_key_value;
-            if (!kv_secret->TryGetValue("sheets_private_key", sheets_private_key_value)) {
-                throw InvalidInputException("'sheets_private_key' not found in 'gsheet' secret");
-            }
-            std::string sheets_private_key_string = sheets_private_key_value.ToString();
-            
-            token = get_token(client_email_string, sheets_private_key_string);
+            token = get_token(kv_secret);
         } else {
             Value token_value;
             if (!kv_secret->TryGetValue("token", token_value)) {

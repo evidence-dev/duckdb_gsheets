@@ -6,6 +6,7 @@
 #include "gsheets_requests.hpp"
 #include "gsheets_utils.hpp"
 #include "duckdb/common/exception.hpp"
+#include "duckdb/main/secret/secret_manager.hpp"
 
 #include <openssl/ssl.h>
 #include <openssl/err.h>
@@ -67,14 +68,26 @@ namespace duckdb
         output[output_index] = '\0';
     }
 
-    std::string get_token(const std::string& email, const std::string& private_key_string) {
+    std::string get_token(const KeyValueSecret* kv_secret) {
         const char *header = "{\"alg\":\"RS256\",\"typ\":\"JWT\"}";
 
         /* Create jwt claim set */
         json jwt_claim_set;
         std::time_t t = std::time(NULL);
 
-        jwt_claim_set["iss"] = email; /* service account email address */
+        Value email_value;
+        if (!kv_secret->TryGetValue("email", email_value)) {
+            throw InvalidInputException("'email' not found in 'gsheet' secret");
+        }
+        std::string email_string = email_value.ToString();
+
+        Value secret_value;
+        if (!kv_secret->TryGetValue("secret", secret_value)) {
+            throw InvalidInputException("'secret' (private_key) not found in 'gsheet' secret");
+        }
+        std::string secret_string = secret_value.ToString();
+
+        jwt_claim_set["iss"] = email_string; /* service account email address */
         jwt_claim_set["scope"] = "https://www.googleapis.com/auth/spreadsheets" /* scope of requested access token */;
         jwt_claim_set["aud"] = "https://accounts.google.com/o/oauth2/token"; /* intended target of the assertion for an access token */
         jwt_claim_set["iat"] = std::to_string(t); /* issued time */
@@ -100,8 +113,8 @@ namespace duckdb
         digest_str[SHA256_DIGEST_LENGTH * 2] = '\0';
         
         BIO* bio = BIO_new(BIO_s_mem());
-        const void * private_key_pointer = private_key_string.c_str();
-        int private_key_length = std::strlen(private_key_string.c_str());
+        const void * private_key_pointer = secret_string.c_str();
+        int private_key_length = std::strlen(secret_string.c_str());
         BIO_write(bio, private_key_pointer, private_key_length);
         EVP_PKEY* evp_key = PEM_read_bio_PrivateKey(bio, NULL, NULL, NULL);
         RSA* rsa = EVP_PKEY_get1_RSA(evp_key);
