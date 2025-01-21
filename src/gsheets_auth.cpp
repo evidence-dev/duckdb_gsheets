@@ -83,7 +83,7 @@ namespace duckdb
     }
 
     // TODO: Maybe this should be a KeyValueSecret
-    static unique_ptr<BaseSecret> CreateGsheetSecretFromPrivateKey(ClientContext &context, CreateSecretInput &input) {
+    static unique_ptr<BaseSecret> CreateGsheetSecretFromKeyFile(ClientContext &context, CreateSecretInput &input) {
         auto scope = input.scope;
 
         auto result = make_uniq<KeyValueSecret>(scope, input.type, input.provider, input.name);
@@ -95,16 +95,16 @@ namespace duckdb
         std::ifstream ifs(filename);
         json credentials_file = json::parse(ifs);
         std::string email = credentials_file["client_email"].get<std::string>();
-        std::string private_key_string = credentials_file["private_key"].get<std::string>();
+        std::string secret = credentials_file["private_key"].get<std::string>();
 
         // Manage specific secret option
-        (*result).secret_map["client_email"] = Value(email);
-        (*result).secret_map["sheets_private_key"] = Value(private_key_string);
+        (*result).secret_map["email"] = Value(email);
+        (*result).secret_map["secret"] = Value(secret);
         CopySecret("filename", input, *result); // Store the filename anyway
 
         // Redact sensible keys
         RedactCommonKeys(*result);
-        result->redact_keys.insert("sheets_private_key");
+        result->redact_keys.insert("secret");
         result->redact_keys.insert("filename");
 
         return std::move(result);
@@ -134,10 +134,10 @@ namespace duckdb
         ExtensionUtil::RegisterFunction(instance, oauth_function);
 
         // Register the private key secret provider
-        CreateSecretFunction private_key_function = {type, "private_key", CreateGsheetSecretFromPrivateKey};
-        private_key_function.named_parameters["filename"] = LogicalType::VARCHAR;
-        RegisterCommonSecretParameters(private_key_function);
-        ExtensionUtil::RegisterFunction(instance, private_key_function);
+        CreateSecretFunction key_file_function = {type, "key_file", CreateGsheetSecretFromKeyFile};
+        key_file_function.named_parameters["filename"] = LogicalType::VARCHAR;
+        RegisterCommonSecretParameters(key_file_function);
+        ExtensionUtil::RegisterFunction(instance, key_file_function);
     }
 
     std::string InitiateOAuthFlow()
