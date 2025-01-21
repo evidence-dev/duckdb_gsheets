@@ -140,22 +140,20 @@ unique_ptr<FunctionData> ReadSheetBind(ClientContext &context, TableFunctionBind
         // The secret is the JSON file that is extracted from Google as per the README
         
 
-        Value filename_value;
-        if (!kv_secret->TryGetValue("filename", filename_value)) {
-            throw InvalidInputException("'filename' not found in 'gsheet' secret");
+        Value client_email_value;
+        if (!kv_secret->TryGetValue("client_email", client_email_value)) {
+            throw InvalidInputException("'client_email' not found in 'gsheet' secret");
         }
-        std::string filename_string = filename_value.ToString();
-        
-        std::string token_plus_metadata = get_token(filename_string);
-        
-        json token_json = parseJson(token_plus_metadata);
-        
-        json failure_string = "failure";
-        if (token_json["status"] == failure_string) {
-            throw InvalidInputException("Conversion from private key to token failed. Check email, key format in JSON file (-----BEGIN PRIVATE KEY-----\\n ... -----END PRIVATE KEY-----\\n), and expiration date.");
-        }
+        std::string client_email_string = client_email_value.ToString();
 
-        token = token_json["access_token"].get<std::string>();
+        Value sheets_private_key_value;
+        if (!kv_secret->TryGetValue("sheets_private_key", sheets_private_key_value)) {
+            throw InvalidInputException("'sheets_private_key' not found in 'gsheet' secret");
+        }
+        std::string sheets_private_key_string = sheets_private_key_value.ToString();
+        
+        token = get_token(client_email_string, sheets_private_key_string);
+
     } else {
         Value token_value;
         if (!kv_secret->TryGetValue("token", token_value)) {

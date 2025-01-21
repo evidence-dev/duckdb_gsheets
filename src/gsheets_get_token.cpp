@@ -4,6 +4,8 @@
 #include <stdlib.h>
 #include <fstream>
 #include "gsheets_requests.hpp"
+#include "gsheets_utils.hpp"
+#include "duckdb/common/exception.hpp"
 
 #include <openssl/ssl.h>
 #include <openssl/err.h>
@@ -65,15 +67,12 @@ namespace duckdb
         output[output_index] = '\0';
     }
 
-    std::string get_token(const std::string& filename) {
+    std::string get_token(const std::string& email, const std::string& private_key_string) {
         const char *header = "{\"alg\":\"RS256\",\"typ\":\"JWT\"}";
 
         /* Create jwt claim set */
         json jwt_claim_set;
         std::time_t t = std::time(NULL);
-        std::ifstream ifs(filename);
-        json credentials_file = json::parse(ifs);
-        std::string email = credentials_file["client_email"].get<std::string>();
 
         jwt_claim_set["iss"] = email; /* service account email address */
         jwt_claim_set["scope"] = "https://www.googleapis.com/auth/spreadsheets" /* scope of requested access token */;
@@ -99,8 +98,6 @@ namespace duckdb
         }
         
         digest_str[SHA256_DIGEST_LENGTH * 2] = '\0';
-
-        std::string private_key_string = credentials_file["private_key"].get<std::string>();
         
         BIO* bio = BIO_new(BIO_s_mem());
         const void * private_key_pointer = private_key_string.c_str();
@@ -121,10 +118,13 @@ namespace duckdb
                     sprintf(jwt, "%s.%s", input, signature_64);
 
                     std::string body = "grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=" + std::string(jwt);
-                    return perform_https_request("oauth2.googleapis.com", "/token", "", 
+                    std::string response = perform_https_request("oauth2.googleapis.com", "/token", "", 
                                                HttpMethod::POST, 
                                                body,
                                                "application/x-www-form-urlencoded");
+                    json response_json = parseJson(response);
+                    std::string token = response_json["access_token"].get<std::string>();
+                    return token;
                 } else {
                     printf("Could not verify RSA signature.");
                 }
@@ -135,8 +135,8 @@ namespace duckdb
 
             RSA_free(rsa);
         }
-        std::string failure_message = "{\"status\":\"failed\"}";
 
-        return failure_message;
+        throw InvalidInputException("Conversion from private key to token failed. Check email, key format in JSON file (-----BEGIN PRIVATE KEY-----\\n ... -----END PRIVATE KEY-----\\n), and expiration date.");
+
     }
 }
