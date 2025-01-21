@@ -1,6 +1,7 @@
 #include "gsheets_auth.hpp"
 #include "gsheets_requests.hpp"
 #include "gsheets_utils.hpp"
+#include "gsheets_get_token.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/main/secret/secret.hpp"
 #include "duckdb/main/extension_util.hpp"
@@ -87,11 +88,23 @@ namespace duckdb
 
         auto result = make_uniq<KeyValueSecret>(scope, input.type, input.provider, input.name);
 
+        // Want to store the private key and email in case the secret it used on another machine.
+        std::string filename_key = "filename";
+        auto filename = (input.options.find(filename_key)->second).ToString();
+
+        std::ifstream ifs(filename);
+        json credentials_file = json::parse(ifs);
+        std::string email = credentials_file["client_email"].get<std::string>();
+        std::string private_key_string = credentials_file["private_key"].get<std::string>();
+
         // Manage specific secret option
-        CopySecret("filename", input, *result);
+        (*result).secret_map["client_email"] = Value(email);
+        (*result).secret_map["sheets_private_key"] = Value(private_key_string);
+        CopySecret("filename", input, *result); // Store the filename anyway
 
         // Redact sensible keys
         RedactCommonKeys(*result);
+        result->redact_keys.insert("sheets_private_key");
         result->redact_keys.insert("filename");
 
         return std::move(result);
