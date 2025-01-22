@@ -5,6 +5,7 @@
 #include <json.hpp>
 #include <iostream>
 #include <sstream>
+#include <string>
 
 using json = nlohmann::json;
 namespace duckdb {
@@ -55,7 +56,7 @@ std::string get_sheet_id_from_name(const std::string& spreadsheet_id, const std:
     json metadata = parseJson(metadata_response);
     for (const auto& sheet : metadata["sheets"]) {
         if (sheet["properties"]["title"].get<std::string>() == sheet_name) {
-            return sheet["properties"]["sheetId"].get<std::string>();
+            return std::to_string(sheet["properties"]["sheetId"].get<int>());
         }
     }
     throw duckdb::InvalidInputException("Sheet with name %s not found", sheet_name);

@@ -1,7 +1,6 @@
 #include "gsheets_read.hpp"
 #include "gsheets_utils.hpp"
 #include "duckdb/common/exception.hpp"
-#include "duckdb/common/string_util.hpp"
 #include "duckdb/main/secret/secret_manager.hpp"
 #include "gsheets_requests.hpp"
 #include <json.hpp>
@@ -93,10 +92,14 @@ void ReadSheetFunction(ClientContext &context, TableFunctionInput &data_p, DataC
 unique_ptr<FunctionData> ReadSheetBind(ClientContext &context, TableFunctionBindInput &input,
                                               vector<LogicalType> &return_types, vector<string> &names) {
     auto sheet_input = input.inputs[0].GetValue<string>();
+
+    // Flags
+	bool use_explicit_sheet_name = false;
     
     // Default values
     bool header = true;
     string sheet_name = "Sheet1";
+    string sheet_id = "0";
 
     // Extract the spreadsheet ID from the input (URL or ID)
     std::string spreadsheet_id = extract_spreadsheet_id(sheet_input);
@@ -127,10 +130,6 @@ unique_ptr<FunctionData> ReadSheetBind(ClientContext &context, TableFunctionBind
 
     std::string token = token_value.ToString();
 
-    // Get sheet name from URL
-    std::string sheet_id = extract_sheet_id(sheet_input);
-    sheet_name = get_sheet_name_from_id(spreadsheet_id, sheet_id, token);
-
     // Parse named parameters
     for (auto &kv : input.named_parameters) {
         if (kv.first == "header") {
@@ -140,8 +139,18 @@ unique_ptr<FunctionData> ReadSheetBind(ClientContext &context, TableFunctionBind
                 throw InvalidInputException("Invalid value for 'header' parameter. Expected a boolean value.");
             }
         } else if (kv.first == "sheet") {
+            use_explicit_sheet_name = true;
             sheet_name = kv.second.GetValue<string>();
+
+            // Validate that sheet with name exists for better error messaging
+            sheet_id = get_sheet_id_from_name(spreadsheet_id, sheet_name, token);
         }
+    }
+
+    // Get sheet name from URL if not provided as input
+    if (!use_explicit_sheet_name) {
+        sheet_id = extract_sheet_id(sheet_input);
+        sheet_name = get_sheet_name_from_id(spreadsheet_id, sheet_id, token);
     }
 
     std::string encoded_sheet_name = url_encode(sheet_name);
