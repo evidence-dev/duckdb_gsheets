@@ -1,7 +1,6 @@
 #include "gsheets_read.hpp"
 
 #include "duckdb/common/exception.hpp"
-#include "duckdb/common/string_util.hpp"
 #include "duckdb/main/secret/secret_manager.hpp"
 #include "gsheets_requests.hpp"
 #include "gsheets_utils.hpp"
