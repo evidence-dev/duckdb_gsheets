@@ -94,12 +94,12 @@ unique_ptr<FunctionData> ReadSheetBind(ClientContext &context, TableFunctionBind
     auto sheet_input = input.inputs[0].GetValue<string>();
 
     // Flags
-    bool use_explicit_sheet_name = false;
-    
-    // Default values
     bool header = true;
-    string sheet_name = "Sheet1";
-    string sheet_id = "0";
+    bool use_explicit_sheet_name = false;
+
+    // Default values
+    string sheet_name = "";
+    string sheet_id = "";
 
     // Extract the spreadsheet ID from the input (URL or ID)
     std::string spreadsheet_id = extract_spreadsheet_id(sheet_input);
@@ -150,7 +150,12 @@ unique_ptr<FunctionData> ReadSheetBind(ClientContext &context, TableFunctionBind
     // Get sheet name from URL if not provided as input
     if (!use_explicit_sheet_name) {
         sheet_id = extract_sheet_id(sheet_input);
-        sheet_name = get_sheet_name_from_id(spreadsheet_id, sheet_id, token);
+        if (sheet_id.empty()) {
+            // Fallback to first sheet by index
+            sheet_name = get_sheet_name_from_index(spreadsheet_id, "0", token);
+        } else {
+            sheet_name = get_sheet_name_from_id(spreadsheet_id, sheet_id, token);
+        }
     }
 
     std::string encoded_sheet_name = url_encode(sheet_name);
