@@ -94,7 +94,7 @@ unique_ptr<FunctionData> ReadSheetBind(ClientContext &context, TableFunctionBind
     auto sheet_input = input.inputs[0].GetValue<string>();
 
     // Flags
-	bool use_explicit_sheet_name = false;
+    bool use_explicit_sheet_name = false;
     
     // Default values
     bool header = true;
