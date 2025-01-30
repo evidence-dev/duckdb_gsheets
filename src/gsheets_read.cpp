@@ -96,6 +96,7 @@ unique_ptr<FunctionData> ReadSheetBind(ClientContext &context, TableFunctionBind
     // Flags
     bool header = true;
     bool use_explicit_sheet_name = false;
+    bool use_all_varchars = false;
 
     // Default values
     string sheet_name = "";
@@ -137,6 +138,12 @@ unique_ptr<FunctionData> ReadSheetBind(ClientContext &context, TableFunctionBind
                 header = kv.second.GetValue<bool>();
             } catch (const std::exception& e) {
                 throw InvalidInputException("Invalid value for 'header' parameter. Expected a boolean value.");
+            }
+        } else if (kv.first == "all_varchar") {
+            try {
+                use_all_varchars = kv.second.GetValue<bool>();
+            } catch (const std::exception& e) {
+                throw InvalidInputException("Invalid value for 'use_varchar' parameter. Expected a boolean value.");
             }
         } else if (kv.first == "sheet") {
             use_explicit_sheet_name = true;
@@ -195,7 +202,7 @@ unique_ptr<FunctionData> ReadSheetBind(ClientContext &context, TableFunctionBind
         names.push_back(column_name);
         
         // If the first row has blanks, assume varchar for now
-        if (i >= first_data_row.size()) {
+        if (i >= first_data_row.size() || use_all_varchars) {
             return_types.push_back(LogicalType::VARCHAR);
             continue;
         } 
