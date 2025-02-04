@@ -4,14 +4,15 @@
 #include "duckdb/main/secret/secret_manager.hpp"
 #include "gsheets_requests.hpp"
 #include <json.hpp>
+#include <string>
 
 namespace duckdb {
 
 using json = nlohmann::json;
 
-ReadSheetBindData::ReadSheetBindData(string spreadsheet_id, string token, bool header, string sheet_name) 
-    : spreadsheet_id(spreadsheet_id), token(token), finished(false), row_index(0), header(header), sheet_name(sheet_name) {
-    response = call_sheets_api(spreadsheet_id, token, sheet_name, HttpMethod::GET);
+ReadSheetBindData::ReadSheetBindData(string spreadsheet_id, string token, bool header, string sheet_name, string sheet_range)
+    : spreadsheet_id(spreadsheet_id), token(token), finished(false), row_index(0), header(header), sheet_name(sheet_name), sheet_range(sheet_range) {
+    response = call_sheets_api(spreadsheet_id, token, sheet_name, sheet_range, HttpMethod::GET);
 }
 
 bool IsValidNumber(const string& value) {
@@ -100,6 +101,7 @@ unique_ptr<FunctionData> ReadSheetBind(ClientContext &context, TableFunctionBind
 
     // Default values
     string sheet_name = "";
+    string sheet_range = "";
     string sheet_id = "";
 
     // Extract the spreadsheet ID from the input (URL or ID)
@@ -149,8 +151,18 @@ unique_ptr<FunctionData> ReadSheetBind(ClientContext &context, TableFunctionBind
             use_explicit_sheet_name = true;
             sheet_name = kv.second.GetValue<string>();
 
+            // Try to extract range from sheet if user provided a name using A1 notation (e.g. `Sheet1!A1:B7`)
+            // TODO: handle scenarios where sheet name may contain `!` when not using A1 notation
+            size_t pos = sheet_name.find("!");
+            if (pos != std::string::npos) {
+                sheet_range = sheet_name.substr(pos + 1);
+                sheet_name = sheet_name.substr(0, pos);
+            }
+
             // Validate that sheet with name exists for better error messaging
             sheet_id = get_sheet_id_from_name(spreadsheet_id, sheet_name, token);
+        } else if (kv.first == "range") {
+            sheet_range = kv.second.GetValue<string>();
         }
     }
 
@@ -167,7 +179,7 @@ unique_ptr<FunctionData> ReadSheetBind(ClientContext &context, TableFunctionBind
 
     std::string encoded_sheet_name = url_encode(sheet_name);
     
-    auto bind_data = make_uniq<ReadSheetBindData>(spreadsheet_id, token, header, encoded_sheet_name);
+    auto bind_data = make_uniq<ReadSheetBindData>(spreadsheet_id, token, header, encoded_sheet_name, sheet_range);
 
     json cleanJson = parseJson(bind_data->response);
     SheetData sheet_data = getSheetData(cleanJson);
