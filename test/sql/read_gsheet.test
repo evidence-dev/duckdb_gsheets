@@ -60,7 +60,7 @@ BUF	32.5	23.0	Buffalo NY	Northeast
 
 # Test the range parameter
 query II
-FROM read_gsheet('11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8', sheet='Sheet1', range='A1:B7');
+FROM read_gsheet('11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8', sheet='Sheet1', range='A2:B7', header=false);
 ----
 Alice	30.0
 Bob	25.0
@@ -69,16 +69,62 @@ Drake	NULL
 NULL	NULL
 Archie	99.0
 
-# Test the range parameter using A1 notation
 query II
-FROM read_gsheet('11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8', sheet='Sheet1!A1:B7');
+FROM read_gsheet('11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8', sheet='Sheet1', range='A2:B7');
 ----
-Alice	30.0
 Bob	25.0
 Charlie	45.0
 Drake	NULL
 NULL	NULL
 Archie	99.0
+
+# Test the range parameter from a quoted sheet
+query II
+FROM read_gsheet('11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8', sheet='''Sheet1!''', range='A2:B7');
+----
+Bob	25.0
+Charlie	45.0
+Drake	NULL
+NULL	NULL
+Archie	99.0
+
+# Test the range parameter from a quoted sheet with A1 notation
+query II
+FROM read_gsheet('11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8', sheet='''Sheet1!''!A2:B7');
+----
+Bob	25.0
+Charlie	45.0
+Drake	NULL
+NULL	NULL
+Archie	99.0
+
+# Test the range parameter using A1 notation
+query II
+FROM read_gsheet('11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8', sheet='Sheet1!A2:B7');
+----
+Bob	25.0
+Charlie	45.0
+Drake	NULL
+NULL	NULL
+Archie	99.0
+
+# Test single value from range
+# NOTE: *must* use `header=false` to avoid uncaught bind error
+query I
+FROM read_gsheet('11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8', sheet='Sheet1', range='A2', header=false);
+----
+Alice
+
+# Test extract range from URL
+query II
+FROM read_gsheet('https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8/edit?gid=0#gid=0&range=B1:C7');
+----
+30.0	Toronto
+25.0	New York
+45.0	Chicago
+NULL	NULL
+NULL	NULL
+99.0	NULL
 
 # Test types - should read numbers as doubles
 query I
