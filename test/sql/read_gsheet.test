@@ -58,6 +58,28 @@ BOS	35.5	23.0	Boston MA	Northeast
 BNY	56.0	24.5	Brooklyn NY	Northeast
 BUF	32.5	23.0	Buffalo NY	Northeast
 
+# Test the range parameter
+query II
+FROM read_gsheet('11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8', sheet='Sheet1', range='A1:B7');
+----
+Alice	30.0
+Bob	25.0
+Charlie	45.0
+Drake	NULL
+NULL	NULL
+Archie	99.0
+
+# Test the range parameter using A1 notation
+query II
+FROM read_gsheet('11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8', sheet='Sheet1!A1:B7');
+----
+Alice	30.0
+Bob	25.0
+Charlie	45.0
+Drake	NULL
+NULL	NULL
+Archie	99.0
+
 # Test types - should read numbers as doubles
 query I
 select age from read_gsheet('11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8') limit 10;
