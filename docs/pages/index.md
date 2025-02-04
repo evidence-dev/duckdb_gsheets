@@ -1,5 +1,6 @@
 ---
 title: DuckDB GSheets
+description: A DuckDB extension for reading and writing Google Sheets with SQL.
 hide_title: true
 ---
 
@@ -8,8 +9,9 @@ hide_title: true
 <Alert status="warning">
 
 **🚧 WARNING - Experimental 🚧** Here be dragons
-
+ 
 </Alert>
+
 
 A DuckDB extension for reading and writing Google Sheets with SQL.
 
@@ -24,7 +26,7 @@ LOAD gsheets;
 
 The latest version of [DuckDB](https://duckdb.org/docs/installation) (currently 1.1.3) is supported.
 
-## Usage
+## Usage 
 
 ### Authenticate
 
@@ -34,8 +36,8 @@ CREATE SECRET (TYPE gsheet);
 
 -- OR create a secret with your Google API access token (boring, see below guide)
 CREATE SECRET (
-    TYPE gsheet,
-    PROVIDER access_token,
+    TYPE gsheet, 
+    PROVIDER access_token, 
     TOKEN '<your_token>'
 );
 ```
@@ -119,6 +121,6 @@ This token will periodically expire - you can re-run the above command again to 
 - Writing data to a sheet starting from a cell other than A1 is not yet supported.
 - Sheets must already exist to COPY TO them.
 
-## Support
+## Support 
 
 If you are having problems, find a bug, or have an idea for an improvement, please [file an issue on GitHub](https://github.com/evidence-dev/duckdb_gsheets).
