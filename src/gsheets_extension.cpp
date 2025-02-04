@@ -79,6 +79,7 @@ static void LoadInternal(DatabaseInstance &instance) {
     TableFunction read_gsheet_function("read_gsheet", {LogicalType::VARCHAR}, ReadSheetFunction, ReadSheetBind);
     read_gsheet_function.named_parameters["header"] = LogicalType::BOOLEAN;
     read_gsheet_function.named_parameters["sheet"] = LogicalType::VARCHAR;
+    read_gsheet_function.named_parameters["range"] = LogicalType::VARCHAR;
     read_gsheet_function.named_parameters["all_varchar"] = LogicalType::BOOLEAN;
     ExtensionUtil::RegisterFunction(instance, read_gsheet_function);
 
