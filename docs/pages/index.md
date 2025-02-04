@@ -1,5 +1,6 @@
 ---
 title: DuckDB GSheets
+description: A DuckDB extension for reading and writing Google Sheets with SQL.
 hide_title: true
 ---
 
