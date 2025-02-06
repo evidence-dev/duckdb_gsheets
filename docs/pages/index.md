@@ -8,7 +8,7 @@ hide_title: true
 
 <Alert status="warning">
 
-**🚧 WARNING - Experimental 🚧** Here be dragons
+**🚧 Experimental 🚧** Here be dragons
  
 </Alert>
 
@@ -24,7 +24,7 @@ INSTALL gsheets FROM community;
 LOAD gsheets;
 ```
 
-The latest version of [DuckDB](https://duckdb.org/docs/installation) (currently 1.1.3) is supported.
+The latest version of [DuckDB](https://duckdb.org/docs/installation) (currently 1.2.0) is supported.
 
 ## Usage 
 
