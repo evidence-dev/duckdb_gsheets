@@ -63,6 +63,13 @@ SELECT * FROM read_gsheet('11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8', all_va
 -- Read a sheet other than the first sheet using the sheet name
 SELECT * FROM read_gsheet('11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8', sheet='Sheet2');
 
+-- Read a spreadsheet using a specific range
+SELECT * FROM read_gsheet('11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8', sheet='Sheet1', range='B1:C7');
+    -- or using A1 notation
+SELECT * FROM read_gsheet('11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8', sheet='Sheet1!B1:C7');
+    -- or from range in URL
+SELECT * FROM read_gsheet('https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8/edit?gid=0#gid=0&range=B1:C7');
+
 -- Read a sheet other than the first sheet using the sheet id in the URL
 SELECT * FROM read_gsheet('https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8/edit?gid=644613997#gid=644613997');
 ```
@@ -111,7 +118,6 @@ This token will periodically expire - you can re-run the above command again to 
 
 - DuckDB WASM is not (yet) supported.
 - Google Sheets has a limit of 10,000,000 cells per spreadsheet.
-- Reading sheets where data does not start in A1 is not yet supported.
 - Writing data to a sheet starting from a cell other than A1 is not yet supported.
 - Sheets must already exist to COPY TO them.
 

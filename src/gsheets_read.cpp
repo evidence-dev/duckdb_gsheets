@@ -4,14 +4,16 @@
 #include "duckdb/main/secret/secret_manager.hpp"
 #include "gsheets_requests.hpp"
 #include <json.hpp>
+#include <string>
+#include <regex>
 
 namespace duckdb {
 
 using json = nlohmann::json;
 
-ReadSheetBindData::ReadSheetBindData(string spreadsheet_id, string token, bool header, string sheet_name) 
-    : spreadsheet_id(spreadsheet_id), token(token), finished(false), row_index(0), header(header), sheet_name(sheet_name) {
-    response = call_sheets_api(spreadsheet_id, token, sheet_name, HttpMethod::GET);
+ReadSheetBindData::ReadSheetBindData(string spreadsheet_id, string token, bool header, string sheet_name, string sheet_range) 
+    : spreadsheet_id(spreadsheet_id), token(token), finished(false), row_index(0), header(header), sheet_name(sheet_name), sheet_range(sheet_range) {
+    response = call_sheets_api(spreadsheet_id, token, sheet_name, sheet_range, HttpMethod::GET);
 }
 
 bool IsValidNumber(const string& value) {
@@ -29,6 +31,12 @@ bool IsValidNumber(const string& value) {
     } catch (...) {
         return false;
     }
+}
+
+bool IsValidA1Range(const std::string& range) {
+    // Matches things like A1, $A$1, A1:B2, $A1:$B2, etc.
+    static const std::regex pattern("^\\$?[A-Za-z]+\\$?[0-9]+(:\\$?[A-Za-z]+\\$?[0-9]+)?$");
+    return std::regex_match(range, pattern);
 }
 
 void ReadSheetFunction(ClientContext &context, TableFunctionInput &data_p, DataChunk &output) {
@@ -105,6 +113,9 @@ unique_ptr<FunctionData> ReadSheetBind(ClientContext &context, TableFunctionBind
     // Extract the spreadsheet ID from the input (URL or ID)
     std::string spreadsheet_id = extract_spreadsheet_id(sheet_input);
 
+    // Try to extract the range from the input (URL or ID)
+    std::string sheet_range = extract_sheet_range(sheet_input);
+
     // Use the SecretManager to get the token
     auto &secret_manager = SecretManager::Get(context);
     auto transaction = CatalogTransaction::GetSystemCatalogTransaction(context);
@@ -146,11 +157,34 @@ unique_ptr<FunctionData> ReadSheetBind(ClientContext &context, TableFunctionBind
                 throw InvalidInputException("Invalid value for 'use_varchar' parameter. Expected a boolean value.");
             }
         } else if (kv.first == "sheet") {
+            // TODO: maybe factor this out to clean up this space
             use_explicit_sheet_name = true;
             sheet_name = kv.second.GetValue<string>();
 
+            // Check if sheet name is quoted and therefore might contain a `!` char that doesn't indicate A1 notation
+            if (!sheet_name.empty() && sheet_name[0] == '\'') {
+                size_t closing_quote_pos = sheet_name.find('\'', 1);
+                if (closing_quote_pos != std::string::npos) {
+                    // Check if there is a `!` char after the closing quote which would indicate A1 notation
+                    if (closing_quote_pos + 1 < sheet_name.size() && sheet_name[closing_quote_pos + 1] == '!') {
+                        sheet_range = sheet_name.substr(closing_quote_pos + 2);
+                    }
+                    // keep only unquoted part of name
+                    sheet_name = sheet_name.substr(1, closing_quote_pos - 1);
+                }
+            } else {
+                // No quotes means any `!` char indicates A1 notation
+                size_t pos = sheet_name.find("!");
+                if (pos != std::string::npos) {
+                    sheet_range = sheet_name.substr(pos + 1);
+                    sheet_name = sheet_name.substr(0, pos);
+                }
+            }
+
             // Validate that sheet with name exists for better error messaging
             sheet_id = get_sheet_id_from_name(spreadsheet_id, sheet_name, token);
+        } else if (kv.first == "range") {
+            sheet_range = kv.second.GetValue<string>();
         }
     }
 
@@ -167,7 +201,7 @@ unique_ptr<FunctionData> ReadSheetBind(ClientContext &context, TableFunctionBind
 
     std::string encoded_sheet_name = url_encode(sheet_name);
     
-    auto bind_data = make_uniq<ReadSheetBindData>(spreadsheet_id, token, header, encoded_sheet_name);
+    auto bind_data = make_uniq<ReadSheetBindData>(spreadsheet_id, token, header, encoded_sheet_name, sheet_range);
 
     json cleanJson = parseJson(bind_data->response);
     SheetData sheet_data = getSheetData(cleanJson);

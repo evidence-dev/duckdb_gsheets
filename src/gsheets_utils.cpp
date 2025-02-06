@@ -39,6 +39,17 @@ std::string extract_sheet_id(const std::string& input) {
     return "";
 }
 
+std::string extract_sheet_range(const std::string& input) {
+    if (input.find("docs.google.com/spreadsheets/d/") != std::string::npos && input.find("range=") != std::string::npos) {
+        std::regex sheet_range_regex("range=([^&]+)");
+        std::smatch match;
+        if (std::regex_search(input, match, sheet_range_regex) && match.size() > 1) {
+            return match.str(1);
+        }
+    }
+    return "";
+}
+
 std::string get_sheet_name_from_id(const std::string& spreadsheet_id, const std::string& sheet_id, const std::string& token) {
     std::string metadata_response = get_spreadsheet_metadata(spreadsheet_id, token);
     json metadata = parseJson(metadata_response);
