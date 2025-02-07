@@ -89,10 +89,10 @@ namespace duckdb
         auto result = make_uniq<KeyValueSecret>(scope, input.type, input.provider, input.name);
 
         // Want to store the private key and email in case the secret it used on another machine.
-        std::string filename_key = "filename";
-        auto filename = (input.options.find(filename_key)->second).ToString();
+        std::string filepath_key = "filepath";
+        auto filepath = (input.options.find(filepath_key)->second).ToString();
 
-        std::ifstream ifs(filename);
+        std::ifstream ifs(filepath);
         json credentials_file = json::parse(ifs);
         std::string email = credentials_file["client_email"].get<std::string>();
         std::string secret = credentials_file["private_key"].get<std::string>();
@@ -100,7 +100,7 @@ namespace duckdb
         // Manage specific secret option
         (*result).secret_map["email"] = Value(email);
         (*result).secret_map["secret"] = Value(secret);
-        CopySecret("filename", input, *result); // Store the filename anyway
+        CopySecret("filepath", input, *result); // Store the filepath anyway
 
         const auto result_const = *result;
         TokenDetails token_details = get_token(context, &result_const);
@@ -112,7 +112,7 @@ namespace duckdb
         // Redact sensible keys
         RedactCommonKeys(*result);
         result->redact_keys.insert("secret");
-        result->redact_keys.insert("filename");
+        result->redact_keys.insert("filepath");
         result->redact_keys.insert("token");
 
         return std::move(result);
@@ -143,7 +143,7 @@ namespace duckdb
 
         // Register the private key secret provider
         CreateSecretFunction key_file_function = {type, "key_file", CreateGsheetSecretFromKeyFile};
-        key_file_function.named_parameters["filename"] = LogicalType::VARCHAR;
+        key_file_function.named_parameters["filepath"] = LogicalType::VARCHAR;
         RegisterCommonSecretParameters(key_file_function);
         ExtensionUtil::RegisterFunction(instance, key_file_function);
     }
