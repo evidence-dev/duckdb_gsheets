@@ -282,5 +282,4 @@ std::string InitiateOAuthFlow() {
 
 	return access_token;
 }
-
 } // namespace duckdb
