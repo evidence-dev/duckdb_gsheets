@@ -1,5 +1,14 @@
 #include <fstream>
 #include <cstdlib>
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#pragma comment(lib, "ws2_32.lib")
+#else
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <unistd.h>
+#endif
 #include <json.hpp>
 
 #include "duckdb/common/exception/binder_exception.hpp"
@@ -138,47 +147,138 @@ void CreateGsheetSecretFunctions::Register(ExtensionLoader &loader) {
 }
 
 std::string InitiateOAuthFlow() {
-	// This is using the Web App OAuth flow, as I can't figure out desktop app flow.
+	// Runs a short-lived local HTTP listener so the OAuth redirect can hand back
+	// the access token automatically, without the user having to copy/paste it.
+	const int PORT = 8765;
 	const std::string client_id = "793766532675-rehqgocfn88h0nl88322ht6d1i12kl4e.apps.googleusercontent.com";
-	const std::string redirect_uri = "https://duckdb-gsheets.com/oauth";
+	const std::string redirect_uri = "http://localhost:" + std::to_string(PORT);
 	const std::string auth_url = "https://accounts.google.com/o/oauth2/v2/auth";
+	std::string access_token;
 
-	// Generate a random state for CSRF protection
+#ifdef _WIN32
+	WSADATA wsa_data;
+	if (WSAStartup(MAKEWORD(2, 2), &wsa_data) != 0) {
+		throw IOException("Failed to initialize Winsock");
+	}
+#endif
+
+	// Create socket
+	int server_fd = socket(AF_INET, SOCK_STREAM, 0);
+	if (server_fd < 0) {
+		throw IOException("Failed to create socket");
+	}
+
+	// Set socket options to allow reuse
+	int opt = 1;
+	if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
+		close(server_fd);
+		throw IOException("Failed to set socket options");
+	}
+
+	// Bind to localhost:PORT
+	struct sockaddr_in address;
+	address.sin_family = AF_INET;
+	address.sin_addr.s_addr = INADDR_ANY;
+	address.sin_port = htons(PORT);
+
+	if (bind(server_fd, (struct sockaddr *)&address, sizeof(address)) < 0) {
+		close(server_fd);
+		throw IOException("Failed to bind to port " + std::to_string(PORT));
+	}
+
+	if (listen(server_fd, 1) < 0) {
+		close(server_fd);
+		throw IOException("Failed to listen on socket");
+	}
+
+	// Generate state for CSRF protection
 	std::string state = generate_random_string(10);
 
 	std::string auth_request_url = auth_url + "?client_id=" + client_id + "&redirect_uri=" + redirect_uri +
 	                               "&response_type=token" + "&scope=https://www.googleapis.com/auth/spreadsheets" +
 	                               "&state=" + state;
 
-	// Instruct the user to visit the URL and grant permission
-	std::cout << "Visit the below URL to authorize DuckDB GSheets" << '\n';
+	// Open browser
+#ifdef _WIN32
+	system(("start \"\" \"" + auth_request_url + "\"").c_str());
+#elif __APPLE__
+	system(("open \"" + auth_request_url + "\"").c_str());
+#elif __linux__
+	system(("xdg-open \"" + auth_request_url + "\"").c_str());
+#endif
+
+	std::cout << '\n' << "Waiting for Login via Browser..." << '\n' << '\n';
 	std::cout << auth_request_url << '\n';
 
-	// Attempt to open the URL in the user's default browser
-	bool should_open_browser = true;
-
-#ifdef __linux__
-	// On Linux, check for headless environment to avoid xdg-open errors
-	const char *display = std::getenv("DISPLAY");
-	const char *wayland_display = std::getenv("WAYLAND_DISPLAY");
-	if (!display && !wayland_display) {
-		should_open_browser = false;
+	// Accept first connection (GET request)
+	int client_socket;
+	if ((client_socket = accept(server_fd, nullptr, nullptr)) < 0) {
+		close(server_fd);
+		throw IOException("Failed to accept connection");
 	}
-#endif
 
-	if (should_open_browser) {
+	// Read initial request
+	char buffer[4096] = {0};
+	ssize_t bytes_read = read(client_socket, buffer, sizeof(buffer));
+	(void)bytes_read;
+
+	// Send response to browser: extract the token from the URL fragment client-side
+	// (fragments are never sent to the server) and post it back to us.
+	std::string response = "HTTP/1.1 200 OK\r\n"
+	                        "Access-Control-Allow-Origin: *\r\n"
+	                        "Access-Control-Allow-Methods: POST, OPTIONS\r\n"
+	                        "Access-Control-Allow-Headers: Content-Type\r\n"
+	                        "Content-Type: text/html\r\n\r\n"
+	                        "<script>"
+	                        "const hash = window.location.hash.substring(1);"
+	                        "const params = new URLSearchParams(hash);"
+	                        "const token = params.get('access_token');"
+	                        "if (token) {"
+	                        "  fetch('/', {"
+	                        "    method: 'POST',"
+	                        "    body: token"
+	                        "  }).then(() => {"
+	                        "    window.location.href = 'https://duckdb-gsheets.com/oauth#ready=1&access_token=success';"
+	                        "  });"
+	                        "}"
+	                        "</script></body></html>";
+	write(client_socket, response.c_str(), response.length());
+	close(client_socket);
+
+	// Accept second connection (POST request)
+	if ((client_socket = accept(server_fd, nullptr, nullptr)) < 0) {
+		close(server_fd);
+		throw IOException("Failed to accept second connection");
+	}
+
+	// Read the POST request
+	memset(buffer, 0, sizeof(buffer));
+	bytes_read = read(client_socket, buffer, sizeof(buffer));
+	std::string token_request(buffer);
+
+	// Send response to POST request
+	std::string post_response = "HTTP/1.1 200 OK\r\n"
+	                             "Access-Control-Allow-Origin: *\r\n"
+	                             "Content-Length: 0\r\n\r\n";
+	write(client_socket, post_response.c_str(), post_response.length());
+
+	// Extract token from POST body
+	size_t body_start = token_request.find("\r\n\r\n");
+	if (body_start != std::string::npos) {
+		access_token = token_request.substr(body_start + 4);
+	}
+
+	// Clean up
+	close(client_socket);
+	close(server_fd);
+
 #ifdef _WIN32
-		system(("start \"\" \"" + auth_request_url + "\"").c_str());
-#elif __APPLE__
-		system(("open \"" + auth_request_url + "\"").c_str());
-#elif __linux__
-		system(("xdg-open \"" + auth_request_url + "\"").c_str());
+	WSACleanup();
 #endif
+
+	if (access_token.empty()) {
+		throw IOException("Failed to obtain access token");
 	}
-	// Open the URL in the user's default browser
-	std::cout << "After granting permission, enter the token: ";
-	std::string access_token;
-	std::cin >> access_token;
 
 	return access_token;
 }
