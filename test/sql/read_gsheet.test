@@ -109,7 +109,11 @@ NULL	NULL
 Archie	99.0
 
 # Test single value from range
-# NOTE: *must* use `header=false` to avoid uncaught bind error
+query I
+FROM read_gsheet('11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8', sheet='Sheet1', range='A2');
+----
+
+# Test single value from range (no headers)
 query I
 FROM read_gsheet('11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8', sheet='Sheet1', range='A2', header=false);
 ----
@@ -167,6 +171,17 @@ FROM read_gsheet('https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8
 ----
 woot	blah	NULL	should get this!
 more wooting	more blah	NULL	should get this!
+
+# Header only results
+query II
+FROM read_gsheet('11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8', sheet='62-header_only');
+----
+
+# Empty sheet
+statement error
+FROM read_gsheet('11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8', sheet='62-empty');
+----
+Invalid Input Error: Sheet 62-empty is empty
 
 # Drop the secret
 statement ok
