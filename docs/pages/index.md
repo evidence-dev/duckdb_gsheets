@@ -46,7 +46,7 @@ CREATE SECRET (
 CREATE SECRET (
     TYPE gsheet, 
     PROVIDER key_file, 
-    FILENAME '<path_to_JSON_file_with_private_key>'
+    FILEPATH '<path_to_JSON_file_with_private_key>'
 );
 ```
 
@@ -116,10 +116,10 @@ This token will periodically expire - you can re-run the above command again to 
 
 Follow steps 1-9 above to get a JSON file with your private key inside.
 
-Include the path to the file as the `FILENAME` parameter when creating a secret.
+Include the path to the file as the `FILEPATH` parameter when creating a secret.
 The recommendation is to use an absolute path, not a relative one, and to store it in the `~/.duckdb` folder.
 You will need to be able to access this file while querying GSheets (its content are not persisted. Later versions of this extension may enable that.)
-Ex: `CREATE SECRET (TYPE gsheet, PROVIDER key_file, FILENAME '<path_to_JSON_file_with_private_key>');`
+Ex: `CREATE SECRET (TYPE gsheet, PROVIDER key_file, FILEPATH '<path_to_JSON_file_with_private_key>');`
 
 You can skip steps 10, 11, and 12 since this extension will convert from your JSON file to a token on your behalf!
 
