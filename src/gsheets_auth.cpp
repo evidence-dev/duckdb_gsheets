@@ -102,10 +102,18 @@ namespace duckdb
         (*result).secret_map["secret"] = Value(secret);
         CopySecret("filename", input, *result); // Store the filename anyway
 
+        const auto result_const = *result;
+        TokenDetails token_details = get_token(context, &result_const);
+        std::string token = token_details.token;
+
+        (*result).secret_map["token"] = Value(token);
+        (*result).secret_map["token_expiration"] = Value(token_details.expiration_time);
+
         // Redact sensible keys
         RedactCommonKeys(*result);
         result->redact_keys.insert("secret");
         result->redact_keys.insert("filename");
+        result->redact_keys.insert("token");
 
         return std::move(result);
     }

@@ -7,6 +7,8 @@
 #include "gsheets_utils.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/main/secret/secret_manager.hpp"
+#include "gsheets_get_token.hpp"
+#include "gsheets_auth.hpp"
 
 #include <openssl/ssl.h>
 #include <openssl/err.h>
@@ -68,7 +70,7 @@ namespace duckdb
         output[output_index] = '\0';
     }
 
-    std::string get_token(const KeyValueSecret* kv_secret) {
+    TokenDetails get_token(ClientContext &context, const KeyValueSecret* kv_secret) {
         const char *header = "{\"alg\":\"RS256\",\"typ\":\"JWT\"}";
 
         /* Create jwt claim set */
@@ -91,9 +93,10 @@ namespace duckdb
         jwt_claim_set["scope"] = "https://www.googleapis.com/auth/spreadsheets" /* scope of requested access token */;
         jwt_claim_set["aud"] = "https://accounts.google.com/o/oauth2/token"; /* intended target of the assertion for an access token */
         jwt_claim_set["iat"] = std::to_string(t); /* issued time */
-        // Since we get a new token on every request (and max request time is 3 minutes), 
-        // set the limit to 10 minutes. (Max that Google allows is 1 hour)
-        jwt_claim_set["exp"] = std::to_string(t+600); /* expire time*/
+        // Max time that Google allows is 1 hour, so set to 30 minutes as a buffer
+        // Set to t+5 for testing purposes
+        std::string expiration_time = std::to_string(t+1800);
+        jwt_claim_set["exp"] = expiration_time; /* expire time*/
 
         char header_64[1024];
         base64encode(header_64, header, strlen(header));
@@ -137,7 +140,8 @@ namespace duckdb
                                                "application/x-www-form-urlencoded");
                     json response_json = parseJson(response);
                     std::string token = response_json["access_token"].get<std::string>();
-                    return token;
+                    TokenDetails result = {token, expiration_time};
+                    return result;
                 } else {
                     printf("Could not verify RSA signature.");
                 }
@@ -151,5 +155,82 @@ namespace duckdb
 
         throw InvalidInputException("Conversion from private key to token failed. Check email, key format in JSON file (-----BEGIN PRIVATE KEY-----\\n ... -----END PRIVATE KEY-----\\n), and expiration date.");
 
+    }
+
+    std::string get_token_and_cache(ClientContext &context, CatalogTransaction &transaction, const KeyValueSecret* kv_secret) {
+        
+        // Check if the token exists and has not expired. If so, use it
+        Value token_value;
+        Value token_expiration_value;
+        if (kv_secret->TryGetValue("token", token_value)) {
+            std::string token_string = token_value.ToString();  
+            
+            if (kv_secret->TryGetValue("token_expiration", token_expiration_value)) {
+                std::string token_expiration_string = token_expiration_value.ToString();
+                // std::cout << "token_expiration_string: " << token_expiration_string << std::endl;
+
+                std::time_t expiration_time = static_cast<std::time_t>(std::stod(token_expiration_string));
+                std::time_t current_time = std::time(NULL);
+                // std::cout << "expiration_time: " << expiration_time << " current_time: " << current_time << std::endl;
+                if (expiration_time > current_time) {
+                    return token_string;
+                }
+            }
+        }
+
+        // If we haven't returned yet, then there is no token or it is expired.
+        // std::cout << "Token does not exist or is expired!" << std::endl;
+        TokenDetails token_details = get_token(context, kv_secret);
+
+        // Cache the token in a new secret
+        auto &secret_manager = SecretManager::Get(context);
+        auto secret_name = kv_secret->GetName();
+        auto old_secret = secret_manager.GetSecretByName(transaction, secret_name);
+        auto persist_type = old_secret->persist_type;
+        auto storage_mode = old_secret->storage_mode;
+        CreateSecretInfo create_secret_info = CreateSecretInfo(OnCreateConflict::REPLACE_ON_CONFLICT, persist_type);
+
+        // Copy the old secret (to get metadata about the secret we want to maintain)
+        auto new_secret = old_secret->secret->Clone().get();
+        auto new_secret_kv = dynamic_cast<const KeyValueSecret &>(*old_secret->secret);
+        
+        // Add in the new token and expiration date
+        case_insensitive_map_t<Value> new_options;
+        new_options["token"] = Value(token_details.token);
+        new_options["token_expiration"] = Value(token_details.expiration_time);
+        // std::cout << "About to set new expiration_time: " << token_details.expiration_time << std::endl;
+
+        // Create a new secret based on the old secret metadata, but with new token and expiration
+        auto new_token_input = CreateSecretInput {
+            new_secret_kv.GetType(),
+            new_secret_kv.GetProvider(),
+            "", // I don't know what storage_type to put, and it shouldn't be needed
+            new_secret_kv.GetName(),
+            new_secret_kv.GetScope(),
+            new_options
+            };
+        auto successfully_set_token = new_secret_kv.TrySetValue("token", new_token_input);
+        auto successfully_set_token_expiration = new_secret_kv.TrySetValue("token_expiration", new_token_input);
+        // std::cout << "successfully_set_token: " << successfully_set_token << std::endl;
+        // std::cout << "successfully_set_token_expiration: " << successfully_set_token_expiration << std::endl;
+
+        // Then register the secret with the OnCreateConflict set to REPLACE_ON_CONFLICT
+        secret_manager.RegisterSecret(
+            transaction,
+            make_uniq<const KeyValueSecret>(new_secret_kv),
+            OnCreateConflict::REPLACE_ON_CONFLICT,
+            persist_type,
+            storage_mode
+            );
+
+        // To make sure saving the secret worked end to end, return the token from the new secret
+        auto repulled_new_secret = secret_manager.GetSecretByName(transaction, secret_name);
+        auto repulled_new_secret_kv = dynamic_cast<const KeyValueSecret &>(*repulled_new_secret->secret);
+        Value repulled_token_value;
+        if (!repulled_new_secret_kv.TryGetValue("token", repulled_token_value)) {
+            throw InvalidInputException("'token' not found in repulled 'gsheet' secret after caching");
+        }
+        std::string token_string = repulled_token_value.ToString();
+        return token_string;
     }
 }
