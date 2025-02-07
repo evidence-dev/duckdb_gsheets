@@ -6,6 +6,9 @@
 #include "duckdb/main/extension_util.hpp"
 #include <fstream>
 #include <cstdlib>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <unistd.h>
 
 namespace duckdb
 {
@@ -104,26 +107,52 @@ namespace duckdb
 
     std::string InitiateOAuthFlow()
     {
-        // This is using the Web App OAuth flow, as I can't figure out desktop app flow.
+        const int PORT = 8765;
         const std::string client_id = "793766532675-rehqgocfn88h0nl88322ht6d1i12kl4e.apps.googleusercontent.com";
-        const std::string redirect_uri = "https://duckdb-gsheets.com/oauth";
+        const std::string redirect_uri = "http://localhost:" + std::to_string(PORT);  // Use PORT in redirect URI
         const std::string auth_url = "https://accounts.google.com/o/oauth2/v2/auth";
+        std::string access_token;
+        
+        // Create socket
+        int server_fd = socket(AF_INET, SOCK_STREAM, 0);
+        if (server_fd < 0) {
+            throw IOException("Failed to create socket");
+        }
+        
+        // Set socket options to allow reuse
+        int opt = 1;
+        if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
+            close(server_fd);
+            throw IOException("Failed to set socket options");
+        }
+        
+        // Bind to localhost:8765
+        struct sockaddr_in address;
+        address.sin_family = AF_INET;
+        address.sin_addr.s_addr = INADDR_ANY;
+        address.sin_port = htons(PORT);
+        
+        if (bind(server_fd, (struct sockaddr *)&address, sizeof(address)) < 0) {
+            close(server_fd);
+            throw IOException("Failed to bind to port " + std::to_string(PORT));
+        }
+        
+        if (listen(server_fd, 1) < 0) {
+            close(server_fd);
+            throw IOException("Failed to listen on socket");
+        }
 
-        // Generate a random state for CSRF protection
+        // Generate state for CSRF protection
         std::string state = generate_random_string(10);
-
+        
+        // Construct auth URL
         std::string auth_request_url = auth_url + "?client_id=" + client_id +
                                        "&redirect_uri=" + redirect_uri +
                                        "&response_type=token" +
                                        "&scope=https://www.googleapis.com/auth/spreadsheets" +
                                        "&state=" + state;
-
-        // Instruct the user to visit the URL and grant permission
-        std::cout << "Visit the below URL to authorize DuckDB GSheets" << std::endl << std::endl;
-        std::cout << auth_request_url << std::endl << std::endl;
         
-
-        // Open the URL in the user's default browser
+        // Open browser
         #ifdef _WIN32
             system(("start \"\" \"" + auth_request_url + "\"").c_str());
         #elif __APPLE__
@@ -131,12 +160,77 @@ namespace duckdb
         #elif __linux__
             system(("xdg-open \"" + auth_request_url + "\"").c_str());
         #endif
-
-
-        std::cout << "After granting permission, enter the token: ";
-        std::string access_token;
-        std::cin >> access_token;
-
+        
+        std::cout << "Waiting for login via browser..." << std::endl;
+        std::cout << auth_request_url << std::endl;
+        
+        // Accept first connection (GET request)
+        int client_socket;
+        if ((client_socket = accept(server_fd, nullptr, nullptr)) < 0) {
+            close(server_fd);
+            throw IOException("Failed to accept connection");
+        }
+        
+        // Read initial request
+        char buffer[4096] = {0};
+        ssize_t bytes_read = read(client_socket, buffer, sizeof(buffer));
+        
+        // Send response to browser
+        std::string response = "HTTP/1.1 200 OK\r\n"
+                              "Access-Control-Allow-Origin: *\r\n"
+                              "Access-Control-Allow-Methods: POST, OPTIONS\r\n"
+                              "Access-Control-Allow-Headers: Content-Type\r\n"
+                              "Content-Type: text/html\r\n\r\n"
+                              "<html><body><h1>Authorization successful!</h1>"
+                              "<p>Completing authorization...</p>"
+                              "<script>"
+                              "const hash = window.location.hash.substring(1);"
+                              "const params = new URLSearchParams(hash);"
+                              "const token = params.get('access_token');"
+                              "if (token) {"
+                              "  fetch('http://localhost:8765/token', {"
+                              "    method: 'POST',"
+                              "    headers: {'Content-Type': 'text/plain'},"
+                              "    body: token"
+                              "  }).then(() => {"
+                              "    document.body.innerHTML = '<h1>Authorization successful!</h1><p>You can close this window now.</p>';"
+                              "  });"
+                              "}"
+                              "</script></body></html>";
+        write(client_socket, response.c_str(), response.length());
+        close(client_socket);
+        
+        // Accept second connection (POST request)
+        if ((client_socket = accept(server_fd, nullptr, nullptr)) < 0) {
+            close(server_fd);
+            throw IOException("Failed to accept second connection");
+        }
+        
+        // Read the POST request
+        memset(buffer, 0, sizeof(buffer));
+        bytes_read = read(client_socket, buffer, sizeof(buffer));
+        std::string token_request(buffer);
+        
+        // Send response to POST request
+        std::string post_response = "HTTP/1.1 200 OK\r\n"
+                                  "Access-Control-Allow-Origin: *\r\n"
+                                  "Content-Length: 0\r\n\r\n";
+        write(client_socket, post_response.c_str(), post_response.length());
+        
+        // Extract token from POST body
+        size_t body_start = token_request.find("\r\n\r\n");
+        if (body_start != std::string::npos) {
+            access_token = token_request.substr(body_start + 4);
+        }
+        
+        // Clean up
+        close(client_socket);
+        close(server_fd);
+        
+        if (access_token.empty()) {
+            throw IOException("Failed to obtain access token");
+        }
+        
         return access_token;
     }
 
