@@ -16,6 +16,12 @@ sidebar_link: false
 
 ## Authorization Pending
 
+{:else if authCode === 'success'}
+
+## Authorization Successful
+
+You can now close this window.
+
 {:else if authCode}
 
 ## Authorization Successful
