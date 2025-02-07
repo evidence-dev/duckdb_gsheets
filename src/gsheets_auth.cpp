@@ -107,9 +107,9 @@ namespace duckdb
 
     std::string InitiateOAuthFlow()
     {
-        const int PORT = 8765;
+        const int PORT = 8765;  // Define port constant
         const std::string client_id = "793766532675-rehqgocfn88h0nl88322ht6d1i12kl4e.apps.googleusercontent.com";
-        const std::string redirect_uri = "http://localhost:" + std::to_string(PORT);  // Use PORT in redirect URI
+        const std::string redirect_uri = "http://localhost:" + std::to_string(PORT);
         const std::string auth_url = "https://accounts.google.com/o/oauth2/v2/auth";
         std::string access_token;
         
@@ -161,8 +161,7 @@ namespace duckdb
             system(("xdg-open \"" + auth_request_url + "\"").c_str());
         #endif
         
-        std::cout << "Waiting for login via browser..." << std::endl;
-        std::cout << auth_request_url << std::endl;
+        std::cout << "Waiting for OAuth response on localhost:" << PORT << "..." << std::endl;
         
         // Accept first connection (GET request)
         int client_socket;
@@ -181,19 +180,16 @@ namespace duckdb
                               "Access-Control-Allow-Methods: POST, OPTIONS\r\n"
                               "Access-Control-Allow-Headers: Content-Type\r\n"
                               "Content-Type: text/html\r\n\r\n"
-                              "<html><body><h1>Authorization successful!</h1>"
-                              "<p>Completing authorization...</p>"
                               "<script>"
                               "const hash = window.location.hash.substring(1);"
                               "const params = new URLSearchParams(hash);"
                               "const token = params.get('access_token');"
                               "if (token) {"
-                              "  fetch('http://localhost:8765/token', {"
+                              "  fetch('/', {"
                               "    method: 'POST',"
-                              "    headers: {'Content-Type': 'text/plain'},"
                               "    body: token"
                               "  }).then(() => {"
-                              "    document.body.innerHTML = '<h1>Authorization successful!</h1><p>You can close this window now.</p>';"
+                              "    window.location.href = 'https://duckdb-gsheets.com/oauth#ready=1&access_token=success';"
                               "  });"
                               "}"
                               "</script></body></html>";
