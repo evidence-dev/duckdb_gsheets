@@ -111,18 +111,18 @@ json parseJson(const std::string& json_str) {
 
 SheetData getSheetData(const json& j) {
     SheetData result;
-    if (j.contains("range") && j.contains("majorDimension") && j.contains("values")) {
+    if (j.contains("range") && j.contains("majorDimension")) {
         result.range = j["range"].get<std::string>();
         result.majorDimension = j["majorDimension"].get<std::string>();
-        result.values = j["values"].get<std::vector<std::vector<std::string>>>();
+        // NOTE: no need to hard fail on empty sheet values. We can handle this more naturally further down the call chain.
+        //       Just default to empty 2D vec.
+        result.values = j.contains("values") ? j["values"].get<std::vector<std::vector<std::string>>>() : std::vector<std::vector<std::string>>{};
     } else if (j.contains("error")) {
         string message = j["error"]["message"].get<std::string>();
-            int code = j["error"]["code"].get<int>();
-            throw std::runtime_error("Google Sheets API error: " + std::to_string(code) + " - " + message);
-        } else {
-        std::cerr << "JSON does not contain expected fields" << std::endl;
-        std::cerr << "Raw JSON string: " << j.dump() << std::endl;
-        throw;
+        int code = j["error"]["code"].get<int>();
+        throw std::runtime_error("Google Sheets API error: " + std::to_string(code) + " - " + message);
+    } else {
+        throw duckdb::InvalidInputException("JSON does not contain expected fields.\nRaw JSON string: %s", j.dump());
     }
     return result;
 }
