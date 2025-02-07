@@ -10,6 +10,13 @@ namespace duckdb {
 
     void base64encode(char *output, const char *input, size_t input_length) ;
 
-    std::string get_token(const KeyValueSecret* kv_secret) ;
+    struct TokenDetails {
+        std::string token;
+        std::string expiration_time;
+    };
 
+    TokenDetails get_token(ClientContext &context, const KeyValueSecret* kv_secret) ;
+    std::string get_token_and_cache(ClientContext &context, CatalogTransaction &transaction, const KeyValueSecret* kv_secret) ;
+
+    
 }
