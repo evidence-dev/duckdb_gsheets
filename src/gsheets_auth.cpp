@@ -161,7 +161,7 @@ namespace duckdb
             system(("xdg-open \"" + auth_request_url + "\"").c_str());
         #endif
         
-        std::cout << "Waiting for OAuth response on localhost:" << PORT << "..." << std::endl;
+        std::cout << "Waiting for Login via Browser..." << std::endl << std::endl;
         
         // Accept first connection (GET request)
         int client_socket;
