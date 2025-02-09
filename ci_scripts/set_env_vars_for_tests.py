@@ -25,4 +25,4 @@ with open(env_file, "a") as myfile:
     # Set the key_file filepath as an env var for other tests
     myfile.write(f"KEY_FILE_PATH={key_file_path}")
 
-print('It seems to have worked!')
+print('It seems to have worked?')
