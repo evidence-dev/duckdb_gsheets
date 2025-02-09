@@ -91,10 +91,14 @@ namespace duckdb
         return response;
     }
 
-    std::string call_sheets_api(const std::string &spreadsheet_id, const std::string &token, const std::string &sheet_name, HttpMethod method, const std::string &body)
+    std::string call_sheets_api(const std::string &spreadsheet_id, const std::string &token, const std::string &sheet_name, const std::string& sheet_range, HttpMethod method, const std::string &body)
     {
         std::string host = "sheets.googleapis.com";
         std::string path = "/v4/spreadsheets/" + spreadsheet_id + "/values/" + sheet_name;
+
+        if (!sheet_range.empty()) {
+            path += "!" + sheet_range;
+        }
 
         if (method == HttpMethod::POST) {
             path += ":append";

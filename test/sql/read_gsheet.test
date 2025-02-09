@@ -58,6 +58,74 @@ BOS	35.5	23.0	Boston MA	Northeast
 BNY	56.0	24.5	Brooklyn NY	Northeast
 BUF	32.5	23.0	Buffalo NY	Northeast
 
+# Test the range parameter
+query II
+FROM read_gsheet('11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8', sheet='Sheet1', range='A2:B7', header=false);
+----
+Alice	30.0
+Bob	25.0
+Charlie	45.0
+Drake	NULL
+NULL	NULL
+Archie	99.0
+
+query II
+FROM read_gsheet('11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8', sheet='Sheet1', range='A2:B7');
+----
+Bob	25.0
+Charlie	45.0
+Drake	NULL
+NULL	NULL
+Archie	99.0
+
+# Test the range parameter from a quoted sheet
+query II
+FROM read_gsheet('11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8', sheet='''Sheet1!''', range='A2:B7');
+----
+Bob	25.0
+Charlie	45.0
+Drake	NULL
+NULL	NULL
+Archie	99.0
+
+# Test the range parameter from a quoted sheet with A1 notation
+query II
+FROM read_gsheet('11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8', sheet='''Sheet1!''!A2:B7');
+----
+Bob	25.0
+Charlie	45.0
+Drake	NULL
+NULL	NULL
+Archie	99.0
+
+# Test the range parameter using A1 notation
+query II
+FROM read_gsheet('11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8', sheet='Sheet1!A2:B7');
+----
+Bob	25.0
+Charlie	45.0
+Drake	NULL
+NULL	NULL
+Archie	99.0
+
+# Test single value from range
+# NOTE: *must* use `header=false` to avoid uncaught bind error
+query I
+FROM read_gsheet('11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8', sheet='Sheet1', range='A2', header=false);
+----
+Alice
+
+# Test extract range from URL
+query II
+FROM read_gsheet('https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8/edit?gid=0#gid=0&range=B1:C7');
+----
+30.0	Toronto
+25.0	New York
+45.0	Chicago
+NULL	NULL
+NULL	NULL
+99.0	NULL
+
 # Test types - should read numbers as doubles
 query I
 select age from read_gsheet('11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8') limit 10;
@@ -77,6 +145,28 @@ FROM read_gsheet('https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8
 2.0	value2	blabla2
 3.0	value3	blabla3
 NULL	value4	blabla4
+
+# Issue 47: Blanks in the first row should not prevent all columns from returning
+query IIII
+FROM read_gsheet('https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8/edit?gid=1746330494#gid=1746330494');
+----
+woot	blah	NULL	NULL
+more wooting	more blah	NULL	should get this!
+
+# Issue 47: Read despite missing cells (and test booleans and doubles)
+query IIIIIII
+FROM read_gsheet('https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8/edit?gid=1961167280#gid=1961167280');
+----
+woot	blah	NULL	NULL	true	123.0	should get this!
+more wooting	more blah	should handle blank to the right	NULL	NULL	NULL	NULL
+more wooting	more blah	NULL	NULL	false	456.789	should get this!
+
+# Issue 47: Read despite missing column headers
+query IIII
+FROM read_gsheet('https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8/edit?gid=1108445818#gid=1108445818');
+----
+woot	blah	NULL	should get this!
+more wooting	more blah	NULL	should get this!
 
 # Drop the secret
 statement ok

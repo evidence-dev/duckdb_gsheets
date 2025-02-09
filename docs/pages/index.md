@@ -1,5 +1,6 @@
 ---
 title: DuckDB GSheets
+description: A DuckDB extension for reading and writing Google Sheets with SQL.
 hide_title: true
 ---
 
@@ -7,7 +8,7 @@ hide_title: true
 
 <Alert status="warning">
 
-**🚧 WARNING - Experimental 🚧** Here be dragons
+**🚧 Experimental 🚧** Here be dragons
  
 </Alert>
 
@@ -23,7 +24,7 @@ INSTALL gsheets FROM community;
 LOAD gsheets;
 ```
 
-The latest version of [DuckDB](https://duckdb.org/docs/installation) (currently 1.1.3) is supported.
+The latest version of [DuckDB](https://duckdb.org/docs/installation) (currently 1.2.0) is supported.
 
 ## Usage 
 
@@ -63,10 +64,20 @@ FROM 'https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQs
 FROM read_gsheet('11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8');
 
 -- Read a spreadsheet with no header row
-SELECT * FROM read_gsheet('11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8', headers=false);
+SELECT * FROM read_gsheet('11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8', header=false);
+
+-- Read all values in as varchar, skipping type inference
+SELECT * FROM read_gsheet('11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8', all_varchar=true);
 
 -- Read a sheet other than the first sheet using the sheet name
 SELECT * FROM read_gsheet('11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8', sheet='Sheet2');
+
+-- Read a spreadsheet using a specific range
+SELECT * FROM read_gsheet('11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8', sheet='Sheet1', range='B1:C7');
+    -- or using A1 notation
+SELECT * FROM read_gsheet('11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8', sheet='Sheet1!B1:C7');
+    -- or from range in URL
+SELECT * FROM read_gsheet('https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8/edit?gid=0#gid=0&range=B1:C7');
 
 -- Read a sheet other than the first sheet using the sheet id in the URL
 SELECT * FROM read_gsheet('https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8/edit?gid=644613997#gid=644613997');
@@ -131,8 +142,8 @@ This will also require an additional API request for every Google Sheets call, s
 
 ## Limitations / Known Issues
 
-- Google Sheets has a limit of 1,000,000 cells per spreadsheet.
-- Reading sheets where data does not start in A1 is not yet supported.
+- DuckDB WASM is not (yet) supported.
+- Google Sheets has a limit of 10,000,000 cells per spreadsheet.
 - Writing data to a sheet starting from a cell other than A1 is not yet supported.
 - Sheets must already exist to COPY TO them.
 

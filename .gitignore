@@ -11,3 +11,6 @@ token.txt
 .env
 _site/
 credentials.json
+compile_commands.json
+.cache/clangd/
+.helix/

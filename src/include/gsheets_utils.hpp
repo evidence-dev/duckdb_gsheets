@@ -26,6 +26,13 @@ std::string extract_spreadsheet_id(const std::string& input);
 std::string extract_sheet_id(const std::string& input);
 
 /**
+ * Extracts the sheet range from a Google Sheets URL
+ * @param input A Google Sheets URL
+ * @return The extracted sheet range
+ */
+std::string extract_sheet_range(const std::string& input);
+
+/**
  * Gets the sheet name from a spreadsheet ID and sheet ID
  * @param spreadsheet_id The spreadsheet ID
  * @param sheet_id The sheet ID
@@ -33,6 +40,15 @@ std::string extract_sheet_id(const std::string& input);
  * @return The sheet name
  */
 std::string get_sheet_name_from_id(const std::string& spreadsheet_id, const std::string& sheet_id, const std::string& token);
+
+/**
+ * Gets the sheet name from a spreadsheet ID and sheet ID
+ * @param spreadsheet_id The spreadsheet ID
+ * @param sheet_index The sheet index (zero-based)
+ * @param token The Google API token
+ * @return The sheet name
+ */
+std::string get_sheet_name_from_index(const std::string& spreadsheet_id, const std::string& sheet_index, const std::string& token);
 
 /**
  * Gets the sheet ID from a spreadsheet ID and sheet name

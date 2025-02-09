@@ -98,7 +98,8 @@ namespace duckdb
 
         // Make the API call to write data to the Google Sheet
         // Today, this is only append.
-        std::string response = call_sheets_api(spreadsheet_id, token, encoded_sheet_name, HttpMethod::POST, request_body);
+        // TODO: add support for ranged writes https://developers.google.com/sheets/api/samples/writing
+        std::string response = call_sheets_api(spreadsheet_id, token, encoded_sheet_name, "", HttpMethod::POST, request_body);
 
         // Check for errors in the response
         json response_json = parseJson(response);
@@ -155,7 +156,8 @@ namespace duckdb
 
         // Make the API call to write data to the Google Sheet
         // Today, this is only append.
-        std::string response = call_sheets_api(gstate.spreadsheet_id, gstate.token, encoded_sheet_name, HttpMethod::POST, request_body);
+        // TODO: add support for ranged writes https://developers.google.com/sheets/api/samples/writing
+        std::string response = call_sheets_api(gstate.spreadsheet_id, gstate.token, encoded_sheet_name, "", HttpMethod::POST, request_body);
 
         // Check for errors in the response
         json response_json = parseJson(response);

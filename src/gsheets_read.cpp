@@ -1,10 +1,10 @@
 #include "gsheets_read.hpp"
 #include "gsheets_utils.hpp"
 #include "duckdb/common/exception.hpp"
-#include "duckdb/common/string_util.hpp"
 #include "duckdb/main/secret/secret_manager.hpp"
 #include "gsheets_requests.hpp"
 #include <json.hpp>
+#include <string>
 #include <regex>
 #include "gsheets_get_token.hpp"
 #include <iostream>
@@ -13,9 +13,9 @@ namespace duckdb {
 
 using json = nlohmann::json;
 
-ReadSheetBindData::ReadSheetBindData(string spreadsheet_id, string token, bool header, string sheet_name) 
-    : spreadsheet_id(spreadsheet_id), token(token), finished(false), row_index(0), header(header), sheet_name(sheet_name) {
-    response = call_sheets_api(spreadsheet_id, token, sheet_name, HttpMethod::GET);
+ReadSheetBindData::ReadSheetBindData(string spreadsheet_id, string token, bool header, string sheet_name, string sheet_range) 
+    : spreadsheet_id(spreadsheet_id), token(token), finished(false), row_index(0), header(header), sheet_name(sheet_name), sheet_range(sheet_range) {
+    response = call_sheets_api(spreadsheet_id, token, sheet_name, sheet_range, HttpMethod::GET);
 }
 
 bool IsValidNumber(const string& value) {
@@ -35,13 +35,19 @@ bool IsValidNumber(const string& value) {
     }
 }
 
+bool IsValidA1Range(const std::string& range) {
+    // Matches things like A1, $A$1, A1:B2, $A1:$B2, etc.
+    static const std::regex pattern("^\\$?[A-Za-z]+\\$?[0-9]+(:\\$?[A-Za-z]+\\$?[0-9]+)?$");
+    return std::regex_match(range, pattern);
+}
+
 void ReadSheetFunction(ClientContext &context, TableFunctionInput &data_p, DataChunk &output) {
     auto &bind_data = const_cast<ReadSheetBindData&>(data_p.bind_data->Cast<ReadSheetBindData>());
 
     if (bind_data.finished) {
         return;
     }
-
+    
     json cleanJson = parseJson(bind_data.response);
     SheetData sheet_data = getSheetData(cleanJson);
 
@@ -51,26 +57,12 @@ void ReadSheetFunction(ClientContext &context, TableFunctionInput &data_p, DataC
     // Adjust starting index based on whether we're using the header
     idx_t start_index = bind_data.header ? bind_data.row_index + 1 : bind_data.row_index;
 
-    // Determine column types
-    vector<LogicalType> column_types(column_count, LogicalType::VARCHAR);
-    if (start_index < sheet_data.values.size()) {
-        const auto& first_data_row = sheet_data.values[start_index];
-        for (idx_t col = 0; col < column_count && col < first_data_row.size(); col++) {
-            const string& value = first_data_row[col];
-            if (value == "true" || value == "false") {
-                column_types[col] = LogicalType::BOOLEAN;
-            } else if (IsValidNumber(value)) {
-                column_types[col] = LogicalType::DOUBLE;
-            }
-        }
-    }
-
     for (idx_t i = start_index; i < sheet_data.values.size() && row_count < STANDARD_VECTOR_SIZE; i++) {
         const auto& row = sheet_data.values[i];
         for (idx_t col = 0; col < column_count; col++) {
             if (col < row.size()) {
                 const string& value = row[col];
-                switch (column_types[col].id()) {
+                switch (bind_data.return_types[col].id()) {
                     case LogicalTypeId::BOOLEAN:
                         if (value.empty()) {
                             output.SetValue(col, row_count, Value(LogicalType::BOOLEAN));
@@ -86,7 +78,12 @@ void ReadSheetFunction(ClientContext &context, TableFunctionInput &data_p, DataC
                         }
                         break;
                     default:
-                        output.SetValue(col, row_count, Value(value));
+                        // Empty strings should be converted to NULL
+                        if (value.empty()) {
+                            output.SetValue(col, row_count, Value(LogicalType::VARCHAR));
+                        } else {
+                            output.SetValue(col, row_count, Value(value));
+                        }
                         break;
                 }
             } else {
@@ -105,13 +102,21 @@ void ReadSheetFunction(ClientContext &context, TableFunctionInput &data_p, DataC
 unique_ptr<FunctionData> ReadSheetBind(ClientContext &context, TableFunctionBindInput &input,
                                               vector<LogicalType> &return_types, vector<string> &names) {
     auto sheet_input = input.inputs[0].GetValue<string>();
-    
-    // Default values
+
+    // Flags
     bool header = true;
-    string sheet_name = "Sheet1";
+    bool use_explicit_sheet_name = false;
+    bool use_all_varchars = false;
+
+    // Default values
+    string sheet_name = "";
+    string sheet_id = "";
 
     // Extract the spreadsheet ID from the input (URL or ID)
     std::string spreadsheet_id = extract_spreadsheet_id(sheet_input);
+
+    // Try to extract the range from the input (URL or ID)
+    std::string sheet_range = extract_sheet_range(sheet_input);
 
     // Use the SecretManager to get the token
     auto &secret_manager = SecretManager::Get(context);
@@ -148,9 +153,6 @@ unique_ptr<FunctionData> ReadSheetBind(ClientContext &context, TableFunctionBind
 
         token = token_value.ToString();
     }
-    // Get sheet name from URL
-    std::string sheet_id = extract_sheet_id(sheet_input);
-    sheet_name = get_sheet_name_from_id(spreadsheet_id, sheet_id, token);
 
     // Parse named parameters
     for (auto &kv : input.named_parameters) {
@@ -160,37 +162,108 @@ unique_ptr<FunctionData> ReadSheetBind(ClientContext &context, TableFunctionBind
             } catch (const std::exception& e) {
                 throw InvalidInputException("Invalid value for 'header' parameter. Expected a boolean value.");
             }
+        } else if (kv.first == "all_varchar") {
+            try {
+                use_all_varchars = kv.second.GetValue<bool>();
+            } catch (const std::exception& e) {
+                throw InvalidInputException("Invalid value for 'use_varchar' parameter. Expected a boolean value.");
+            }
         } else if (kv.first == "sheet") {
+            // TODO: maybe factor this out to clean up this space
+            use_explicit_sheet_name = true;
             sheet_name = kv.second.GetValue<string>();
+
+            // Check if sheet name is quoted and therefore might contain a `!` char that doesn't indicate A1 notation
+            if (!sheet_name.empty() && sheet_name[0] == '\'') {
+                size_t closing_quote_pos = sheet_name.find('\'', 1);
+                if (closing_quote_pos != std::string::npos) {
+                    // Check if there is a `!` char after the closing quote which would indicate A1 notation
+                    if (closing_quote_pos + 1 < sheet_name.size() && sheet_name[closing_quote_pos + 1] == '!') {
+                        sheet_range = sheet_name.substr(closing_quote_pos + 2);
+                    }
+                    // keep only unquoted part of name
+                    sheet_name = sheet_name.substr(1, closing_quote_pos - 1);
+                }
+            } else {
+                // No quotes means any `!` char indicates A1 notation
+                size_t pos = sheet_name.find("!");
+                if (pos != std::string::npos) {
+                    sheet_range = sheet_name.substr(pos + 1);
+                    sheet_name = sheet_name.substr(0, pos);
+                }
+            }
+
+            // Validate that sheet with name exists for better error messaging
+            sheet_id = get_sheet_id_from_name(spreadsheet_id, sheet_name, token);
+        } else if (kv.first == "range") {
+            sheet_range = kv.second.GetValue<string>();
+        }
+    }
+
+    // Get sheet name from URL if not provided as input
+    if (!use_explicit_sheet_name) {
+        sheet_id = extract_sheet_id(sheet_input);
+        if (sheet_id.empty()) {
+            // Fallback to first sheet by index
+            sheet_name = get_sheet_name_from_index(spreadsheet_id, "0", token);
+        } else {
+            sheet_name = get_sheet_name_from_id(spreadsheet_id, sheet_id, token);
         }
     }
 
     std::string encoded_sheet_name = url_encode(sheet_name);
     
-    auto bind_data = make_uniq<ReadSheetBindData>(spreadsheet_id, token, header, encoded_sheet_name);
+    auto bind_data = make_uniq<ReadSheetBindData>(spreadsheet_id, token, header, encoded_sheet_name, sheet_range);
 
     json cleanJson = parseJson(bind_data->response);
     SheetData sheet_data = getSheetData(cleanJson);
 
-    if (!sheet_data.values.empty()) {
-        idx_t start_index = header ? 1 : 0;
-        if (start_index < sheet_data.values.size()) {
-            const auto& first_data_row = sheet_data.values[start_index];
-            for (size_t i = 0; i < first_data_row.size(); i++) {
-                string column_name = header ? sheet_data.values[0][i] : "column" + std::to_string(i + 1);
-                names.push_back(column_name);
-                
-                const string& value = first_data_row[i];
-                if (value == "true" || value == "false") {
-                    return_types.push_back(LogicalType::BOOLEAN);
-                } else if (IsValidNumber(value)) {
-                    return_types.push_back(LogicalType::DOUBLE);
-                } else {
-                    return_types.push_back(LogicalType::VARCHAR);
-                }
-            }
+    // Prefering early return style to reduce nesting
+    if (sheet_data.values.empty()) {
+        return bind_data;
+    }
+    idx_t start_index = header ? 1 : 0;
+    if (start_index >= sheet_data.values.size()) {
+        return bind_data;
+    }
+
+    const auto& first_data_row = sheet_data.values[start_index];
+    // If we have a header, we want the width of the result to be the max of:
+    //      the width of the header row
+    //      or the width of the first row of data
+    int result_width = first_data_row.size();
+    if (header) {
+        int header_width = sheet_data.values[0].size();
+        if (header_width > result_width) {
+            result_width = header_width;
         }
     }
+    
+    for (size_t i = 0; i < result_width; i++) {
+        // Assign default column_name, but rename to header value if using a header and header cell exists
+        string column_name = "column" + std::to_string(i + 1);
+        if (header && (i < sheet_data.values[0].size())) {
+            column_name = sheet_data.values[0][i];
+        }
+        names.push_back(column_name);
+        
+        // If the first row has blanks, assume varchar for now
+        if (i >= first_data_row.size() || use_all_varchars) {
+            return_types.push_back(LogicalType::VARCHAR);
+            continue;
+        } 
+        const string& value = first_data_row[i];
+        if (value == "TRUE" || value == "FALSE") {
+            return_types.push_back(LogicalType::BOOLEAN);
+        } else if (IsValidNumber(value)) {
+            return_types.push_back(LogicalType::DOUBLE);
+        } else {
+            return_types.push_back(LogicalType::VARCHAR);
+        }
+    }
+
+    bind_data->names = names;
+    bind_data->return_types = return_types;
 
     return bind_data;
 }
