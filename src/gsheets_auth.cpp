@@ -88,7 +88,7 @@ namespace duckdb
 
         auto result = make_uniq<KeyValueSecret>(scope, input.type, input.provider, input.name);
 
-        // Want to store the private key and email in case the secret it used on another machine.
+        // Want to store the private key and email in case the secret is persisted
         std::string filepath_key = "filepath";
         auto filepath = (input.options.find(filepath_key)->second).ToString();
 
@@ -141,7 +141,7 @@ namespace duckdb
         RegisterCommonSecretParameters(oauth_function);
         ExtensionUtil::RegisterFunction(instance, oauth_function);
 
-        // Register the private key secret provider
+        // Register the key_file secret provider
         CreateSecretFunction key_file_function = {type, "key_file", CreateGsheetSecretFromKeyFile};
         key_file_function.named_parameters["filepath"] = LogicalType::VARCHAR;
         RegisterCommonSecretParameters(key_file_function);
