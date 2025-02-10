@@ -40,6 +40,15 @@ CREATE SECRET (
     PROVIDER access_token, 
     TOKEN '<your_token>'
 );
+
+-- OR create a non-expiring JSON secret with your Google API private key 
+-- (This enables use in non-interactive workflows like data pipelines)
+-- (see "Getting a Google API Access Private Key" below)
+CREATE SECRET (
+    TYPE gsheet, 
+    PROVIDER key_file, 
+    FILEPATH '<path_to_JSON_file_with_private_key>'
+);
 ```
 
 ### Read
@@ -113,6 +122,22 @@ To connect DuckDB to Google Sheets via an access token, you’ll need to create 
 14. Run DuckDB and load the extension
 
 This token will periodically expire - you can re-run the above command again to generate a new one.
+
+## Getting a Google API Access Private Key
+
+Follow steps 1-9 above to get a JSON file with your private key inside.
+
+Include the path to the file as the `FILEPATH` parameter when creating a secret.
+Ex: `CREATE SECRET (TYPE gsheet, PROVIDER key_file, FILEPATH '<path_to_JSON_file_with_private_key>');`
+
+You can skip steps 10, 11, and 12 since this extension will convert from your JSON file to a token on your behalf!
+The contents of the JSON file will be stored in the secret, as will the temporary token.
+
+Follow steps 13 and 14.
+
+This private key by default will not expire. Use caution with it. 
+
+This will also require an additional API request approximately every 30 minutes.
 
 ## Limitations / Known Issues
 

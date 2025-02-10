@@ -1,0 +1,35 @@
+# name: test/sql/read_gsheet_key_file.test
+# description: test use of key_file for auth for read_gsheet() function
+# group: [gsheets]
+
+# The key_file should be in the JSON format that Google exports
+# (note that newline characters should not be escaped in the private key)
+require-env KEY_FILE_PATH
+
+# Before we load the extension, this will fail
+statement error
+FROM read_gsheet('11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8', header=true);
+----
+Catalog Error: Table Function with name read_gsheet does not exist!
+
+# Require statement will ensure this test is run with this extension loaded
+require gsheets
+
+# Create a secret NB must substitute a token, do not commit!
+statement ok
+create secret test_secret (
+    type gsheet, 
+    provider key_file, 
+    filepath '${KEY_FILE_PATH}'
+);
+
+# Confirm the key_file works
+query II
+FROM read_gsheet('https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8/edit?gid=528658050#gid=528658050', header=true);
+----
+woot	0
+woot	9001
+
+# Drop the secret
+statement ok
+drop secret test_secret;

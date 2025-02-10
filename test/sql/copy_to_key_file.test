@@ -1,0 +1,53 @@
+# name: test/sql/copy_to_key_file.test
+# description: test use of key_file for auth to copy to gsheet
+# group: [gsheets]
+
+# The key_file should be in the JSON format that Google exports
+# (note that newline characters should not be escaped in the private key)
+require-env KEY_FILE_PATH
+
+# Before we load the extension, this will fail
+statement error
+FROM read_gsheet('11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8', header=true);
+----
+Catalog Error: Table Function with name read_gsheet does not exist!
+
+# Require statement will ensure this test is run with this extension loaded
+require gsheets
+
+# Create a secret NB must substitute a token, do not commit!
+statement ok
+create secret test_secret (
+    type gsheet, 
+    provider key_file, 
+    filepath '${KEY_FILE_PATH}'
+);
+
+# Create a table to copy to Google Sheet
+statement ok
+create table spreadsheets as 
+select 'Microsoft' as company, 'Excel' as product, 1985 as year_founded
+union all
+select 'Google', 'Google Sheets', 2006
+union all
+select 'Apple', 'Numbers', 1984
+union all
+select 'LibreOffice', 'Calc', 2000;
+
+# Copy the table to Google Sheet
+statement ok
+copy spreadsheets to 'https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8/edit?gid=1295634987#gid=1295634987' (format gsheet);
+
+# Read the table from Google Sheet
+query III
+from read_gsheet('https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8/edit?gid=1295634987#gid=1295634987');
+----
+Microsoft	Excel	1985
+Google	Google Sheets	2006
+Apple	Numbers	1984
+LibreOffice	Calc	2000
+
+
+# Drop the secret
+statement ok
+drop secret test_secret;

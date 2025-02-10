@@ -1,11 +1,15 @@
 #include "gsheets_auth.hpp"
 #include "gsheets_requests.hpp"
 #include "gsheets_utils.hpp"
+#include "gsheets_get_token.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/main/secret/secret.hpp"
 #include "duckdb/main/extension_util.hpp"
 #include <fstream>
 #include <cstdlib>
+#include <json.hpp>
+
+using json = nlohmann::json;
 
 namespace duckdb
 {
@@ -78,6 +82,45 @@ namespace duckdb
         return std::move(result);
     }
 
+    // TODO: Maybe this should be a KeyValueSecret
+    static unique_ptr<BaseSecret> CreateGsheetSecretFromKeyFile(ClientContext &context, CreateSecretInput &input) {
+        auto scope = input.scope;
+
+        auto result = make_uniq<KeyValueSecret>(scope, input.type, input.provider, input.name);
+
+        // Want to store the private key and email in case the secret is persisted
+        std::string filepath_key = "filepath";
+        auto filepath = (input.options.find(filepath_key)->second).ToString();
+
+        std::ifstream ifs(filepath);
+        if (!ifs.is_open()) {
+            throw IOException("Could not open JSON key file at: " + filepath);
+        }
+        json credentials_file = json::parse(ifs);
+        std::string email = credentials_file["client_email"].get<std::string>();
+        std::string secret = credentials_file["private_key"].get<std::string>();
+
+        // Manage specific secret option
+        (*result).secret_map["email"] = Value(email);
+        (*result).secret_map["secret"] = Value(secret);
+        CopySecret("filepath", input, *result); // Store the filepath anyway
+
+        const auto result_const = *result;
+        TokenDetails token_details = get_token(context, &result_const);
+        std::string token = token_details.token;
+
+        (*result).secret_map["token"] = Value(token);
+        (*result).secret_map["token_expiration"] = Value(token_details.expiration_time);
+
+        // Redact sensible keys
+        RedactCommonKeys(*result);
+        result->redact_keys.insert("secret");
+        result->redact_keys.insert("filepath");
+        result->redact_keys.insert("token");
+
+        return std::move(result);
+    }
+
     void CreateGsheetSecretFunctions::Register(DatabaseInstance &instance)
     {
         string type = "gsheet";
@@ -100,6 +143,12 @@ namespace duckdb
         oauth_function.named_parameters["use_oauth"] = LogicalType::BOOLEAN;
         RegisterCommonSecretParameters(oauth_function);
         ExtensionUtil::RegisterFunction(instance, oauth_function);
+
+        // Register the key_file secret provider
+        CreateSecretFunction key_file_function = {type, "key_file", CreateGsheetSecretFromKeyFile};
+        key_file_function.named_parameters["filepath"] = LogicalType::VARCHAR;
+        RegisterCommonSecretParameters(key_file_function);
+        ExtensionUtil::RegisterFunction(instance, key_file_function);
     }
 
     std::string InitiateOAuthFlow()
