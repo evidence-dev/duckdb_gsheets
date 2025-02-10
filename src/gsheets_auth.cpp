@@ -6,9 +6,15 @@
 #include "duckdb/main/extension_util.hpp"
 #include <fstream>
 #include <cstdlib>
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#pragma comment(lib, "ws2_32.lib")
+#else
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <unistd.h>
+#endif
 
 namespace duckdb
 {
@@ -154,6 +160,10 @@ namespace duckdb
         
         // Open browser
         #ifdef _WIN32
+        WSADATA wsaData;
+        if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
+            throw std::runtime_error("Failed to initialize Winsock");
+        }
             system(("start \"\" \"" + auth_request_url + "\"").c_str());
         #elif __APPLE__
             system(("open \"" + auth_request_url + "\"").c_str());
@@ -229,5 +239,9 @@ namespace duckdb
         
         return access_token;
     }
+
+    #ifdef _WIN32
+    WSACleanup();
+    #endif
 
 } // namespace duckdb
