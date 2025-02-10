@@ -206,16 +206,17 @@ unique_ptr<FunctionData> ReadSheetBind(ClientContext &context, TableFunctionBind
     json cleanJson = parseJson(bind_data->response);
     SheetData sheet_data = getSheetData(cleanJson);
 
-    // Prefering early return style to reduce nesting
+    // Throw error ourselves to give user a better error message
     if (sheet_data.values.empty()) {
-        return bind_data;
-    }
-    idx_t start_index = header ? 1 : 0;
-    if (start_index >= sheet_data.values.size()) {
-        return bind_data;
+        throw duckdb::InvalidInputException("Sheet %s is empty", sheet_name);
     }
 
-    const auto& first_data_row = sheet_data.values[start_index];
+    idx_t start_index = header ? 1 : 0;
+
+    // Use empty row for first row if results are header-only
+    const std::vector<string> empty_row = {};
+    const auto& first_data_row = start_index >= sheet_data.values.size() ? empty_row : sheet_data.values[start_index];
+
     // If we have a header, we want the width of the result to be the max of:
     //      the width of the header row
     //      or the width of the first row of data
