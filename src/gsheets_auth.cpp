@@ -93,6 +93,9 @@ namespace duckdb
         auto filepath = (input.options.find(filepath_key)->second).ToString();
 
         std::ifstream ifs(filepath);
+        if (!ifs.is_open()) {
+            throw IOException("Could not open JSON key file at: " + filepath);
+        }
         json credentials_file = json::parse(ifs);
         std::string email = credentials_file["client_email"].get<std::string>();
         std::string secret = credentials_file["private_key"].get<std::string>();
