@@ -220,7 +220,7 @@ unique_ptr<FunctionData> ReadSheetBind(ClientContext &context, TableFunctionBind
 
     // Throw error ourselves to give user a better error message
     if (sheet_data.values.empty()) {
-        throw duckdb::InvalidInputException("Sheet %s is empty", sheet_name);
+        throw duckdb::InvalidInputException("Range %s is empty", sheet_data.range);
     }
 
     idx_t start_index = header ? 1 : 0;

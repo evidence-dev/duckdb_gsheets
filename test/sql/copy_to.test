@@ -27,11 +27,63 @@ select 'LibreOffice', 'Calc', 2000;
 
 # Copy the table to Google Sheet
 statement ok
-copy spreadsheets to 'https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8/edit?gid=1295634987#gid=1295634987' (format gsheet);
+copy spreadsheets to 'https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8/edit?gid=295324039#gid=295324039' (format gsheet);
 
 # Read the table from Google Sheet
 query III
-from read_gsheet('https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8/edit?gid=1295634987#gid=1295634987');
+from read_gsheet('https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8/edit?gid=295324039#gid=295324039');
+----
+Microsoft	Excel	1985
+Google	Google Sheets	2006
+Apple	Numbers	1984
+LibreOffice	Calc	2000
+
+# Copy the table to Google Sheet with ranged write
+statement ok
+copy spreadsheets to 'https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8/edit?gid=1385451074#gid=1385451074&range=C6:E10' (format gsheet);
+
+# Read the table from Google Sheet with ranged read
+query III
+from read_gsheet('https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8/edit?gid=1385451074#gid=1385451074&range=C6:E10');
+----
+Microsoft	Excel	1985
+Google	Google Sheets	2006
+Apple	Numbers	1984
+LibreOffice	Calc	2000
+
+# Copy the table to Google Sheet with ranged write (single cell range)
+statement ok
+copy spreadsheets to 'https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8/edit?gid=1385451074#gid=1385451074&range=C6' (format gsheet);
+
+# Read the table from Google Sheet with ranged read
+query III
+from read_gsheet('https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8/edit?gid=1385451074#gid=1385451074&range=C6:E10');
+----
+Microsoft	Excel	1985
+Google	Google Sheets	2006
+Apple	Numbers	1984
+LibreOffice	Calc	2000
+
+# Copy the table to Google Sheet with ranged write (range smaller than table size)
+statement ok
+copy spreadsheets to 'https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8/edit?gid=1385451074#gid=1385451074&range=C6:C7' (format gsheet);
+
+# Read the table from Google Sheet with ranged read
+query III
+from read_gsheet('https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8/edit?gid=1385451074#gid=1385451074&range=C6:E10');
+----
+Microsoft	Excel	1985
+Google	Google Sheets	2006
+Apple	Numbers	1984
+LibreOffice	Calc	2000
+
+# Copy the table to Google Sheet with ranged write (column-only ranges)
+statement ok
+copy spreadsheets to 'https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8/edit?gid=1385451074#gid=1385451074&range=C:E' (format gsheet);
+
+# Read the table from Google Sheet with ranged read
+query III
+from read_gsheet('https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8/edit?gid=1385451074#gid=1385451074&range=C1:E5');
 ----
 Microsoft	Excel	1985
 Google	Google Sheets	2006

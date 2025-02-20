@@ -181,7 +181,7 @@ FROM read_gsheet('11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8', sheet='62-heade
 statement error
 FROM read_gsheet('11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8', sheet='62-empty');
 ----
-Invalid Input Error: Sheet 62-empty is empty
+Invalid Input Error: Range '62-empty'!A1:Z1000 is empty
 
 # Drop the secret
 statement ok
