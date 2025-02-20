@@ -12,6 +12,7 @@ namespace duckdb
     std::string perform_https_request(const std::string &host, const std::string &path, const std::string &token,
                                       HttpMethod method, const std::string &body, const std::string &content_type)
     {
+        // NOTE: implements an exponential backoff retry strategy as per https://developers.google.com/sheets/api/limits
         const int MAX_RETRIES = 10;
         int retry_count = 0;
         int backoff_s = 1;
@@ -91,7 +92,7 @@ namespace duckdb
             // Check for rate limit exceeded
             if (response.find("429 Too Many Requests") != std::string::npos) {
                 std::this_thread::sleep_for(std::chrono::seconds(backoff_s));
-                backoff_s++; // linear backoff
+                backoff_s *= 2;
                 retry_count++;
                 continue;
             }
