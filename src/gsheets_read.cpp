@@ -6,6 +6,8 @@
 #include <json.hpp>
 #include <string>
 #include <regex>
+#include "gsheets_get_token.hpp"
+#include <iostream>
 
 namespace duckdb {
 
@@ -135,12 +137,22 @@ unique_ptr<FunctionData> ReadSheetBind(ClientContext &context, TableFunctionBind
         throw InvalidInputException("Invalid secret format for 'gsheet' secret");
     }
 
-    Value token_value;
-    if (!kv_secret->TryGetValue("token", token_value)) {
-        throw InvalidInputException("'token' not found in 'gsheet' secret");
-    }
+    std::string token;
 
-    std::string token = token_value.ToString();
+    if (secret.GetProvider() == "key_file") {
+        // If using a private key, retrieve the private key from the secret, but convert it 
+        // into a token before use. This is an extra request per 30 minutes.
+        // The secret is the JSON file that is extracted from Google as per the README
+        token = get_token_and_cache(context, transaction, kv_secret);
+
+    } else {
+        Value token_value;
+        if (!kv_secret->TryGetValue("token", token_value)) {
+            throw InvalidInputException("'token' not found in 'gsheet' secret");
+        }
+
+        token = token_value.ToString();
+    }
 
     // Parse named parameters
     for (auto &kv : input.named_parameters) {
