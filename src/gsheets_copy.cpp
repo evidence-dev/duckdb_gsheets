@@ -7,6 +7,7 @@
 #include "duckdb/common/file_system.hpp"
 #include "duckdb/main/secret/secret_manager.hpp"
 #include <json.hpp>
+#include <iostream>
 
 using json = nlohmann::json;
 
@@ -26,7 +27,103 @@ namespace duckdb
     {
         string file_path = input.info.file_path;
 
-        return make_uniq<GSheetWriteBindData>(file_path, sql_types, names);
+        auto options = input.info.options;
+
+        const auto sheet_opt = options.find("sheet");
+        std::string sheet;
+        if (sheet_opt != options.end()) {
+            string error_msg;
+            Value sheet_val;
+            if (!sheet_opt->second.back().DefaultTryCastAs(LogicalType::VARCHAR, sheet_val, &error_msg)) {
+                throw BinderException("sheet option must be a VARCHAR");
+            }
+            if (sheet_val.IsNull()) {
+                throw BinderException("sheet option must be a non-null VARCHAR");
+            }
+            sheet = StringValue::Get(sheet_val);
+        } else {
+            sheet = "";
+        }
+
+
+        const auto range_opt = options.find("range");
+        std::string range;
+        if (range_opt != options.end()) {
+            string error_msg;
+            Value range_val;
+            if (!range_opt->second.back().DefaultTryCastAs(LogicalType::VARCHAR, range_val, &error_msg)) {
+                throw BinderException("range option must be a VARCHAR");
+            }
+            if (range_val.IsNull()) {
+                throw BinderException("range option must be a non-null VARCHAR");
+            }
+            range = StringValue::Get(range_val);
+        } else {
+            range = "";
+        }
+        
+        const auto overwrite_sheet_opt = options.find("overwrite_sheet");
+        bool overwrite_sheet;
+        if (overwrite_sheet_opt != options.end()) {
+            if (overwrite_sheet_opt->second.size() != 1) {
+                throw BinderException("overwrite_sheet option must be a single boolean value");
+            }
+            string error_msg;
+            Value overwrite_sheet_bool_val;
+            if (!overwrite_sheet_opt->second.back().DefaultTryCastAs(LogicalType::BOOLEAN, overwrite_sheet_bool_val, &error_msg)) {
+                throw BinderException("overwrite_sheet option must be a single boolean value");
+            }
+            if (overwrite_sheet_bool_val.IsNull()) {
+                throw BinderException("overwrite_sheet option must be a single boolean value");
+            }
+            overwrite_sheet = BooleanValue::Get(overwrite_sheet_bool_val);
+        } else {
+            overwrite_sheet = true; // Default to overwrite_sheet to maintain prior behavior
+        }
+
+        const auto overwrite_range_opt = options.find("overwrite_range");
+        bool overwrite_range;
+        if (overwrite_range_opt != options.end()) {
+            if (overwrite_range_opt->second.size() != 1) {
+                throw BinderException("overwrite_range option must be a single boolean value");
+            }
+            string error_msg;
+            Value overwrite_range_bool_val;
+            if (!overwrite_range_opt->second.back().DefaultTryCastAs(LogicalType::BOOLEAN, overwrite_range_bool_val, &error_msg)) {
+                throw BinderException("overwrite_range option must be a single boolean value");
+            }
+            if (overwrite_range_bool_val.IsNull()) {
+                throw BinderException("overwrite_range option must be a single boolean value");
+            }
+            overwrite_range = BooleanValue::Get(overwrite_range_bool_val);
+        } else {
+            overwrite_range = false;
+        }
+
+        const auto header_opt = options.find("header");
+        bool header;
+        if (header_opt != options.end()) {
+            if (header_opt->second.size() != 1) {
+                throw BinderException("header option must be a single boolean value");
+            }
+            string error_msg;
+            Value header_bool_val;
+            if (!header_opt->second.back().DefaultTryCastAs(LogicalType::BOOLEAN, header_bool_val, &error_msg)) {
+                throw BinderException("header option must be a single boolean value");
+            }
+            if (header_bool_val.IsNull()) {
+                throw BinderException("header option must be a single boolean value");
+            }
+            header = BooleanValue::Get(header_bool_val);
+        } else {
+            header = true;
+            // If we are in the append case, default to no header instead.
+            if (!overwrite_sheet && !overwrite_range) {
+                header = false;
+            }
+        }
+
+        return make_uniq<GSheetWriteBindData>(file_path, sql_types, names, sheet, range, overwrite_sheet, overwrite_range, header);
     }
 
     unique_ptr<GlobalFunctionData> GSheetCopyFunction::GSheetWriteInitializeGlobal(ClientContext &context, FunctionData &bind_data, const string &file_path)
@@ -54,20 +151,37 @@ namespace duckdb
             throw InvalidInputException("'token' not found in 'gsheet' secret");
         }
 
+        auto options = bind_data.Cast<GSheetWriteBindData>().options;
         std::string token = token_value.ToString();
         std::string spreadsheet_id = extract_spreadsheet_id(file_path);
         std::string sheet_id = extract_sheet_id(file_path);
-        std::string sheet_range = extract_sheet_range(file_path);
-        std::string sheet_name = "Sheet1";
+        std::string sheet_name; 
+        std::string sheet_range;
 
-        sheet_name = get_sheet_name_from_id(spreadsheet_id, sheet_id, token);
+        // Prefer a sheet or range that is specified as a parameter over one on the query string
+        if (!options.sheet.empty()) {
+            sheet_name = options.sheet;
+        } else {
+            sheet_name = get_sheet_name_from_id(spreadsheet_id, sheet_id, token);
+        }
+        
+        if (!options.range.empty()) {
+            sheet_range = options.range;
+        } else {
+            sheet_range = extract_sheet_range(file_path);
+        }
 
         std::string encoded_sheet_name = url_encode(sheet_name);
 
-        // If writing, clear out the entire sheet first.
         // Do this here in the initialization so that it only happens once
-        std::string delete_response = delete_sheet_data(spreadsheet_id, token, encoded_sheet_name);
-
+        // OVERWRITE_RANGE takes precedence since it defaults to false and is less destructive
+        if (options.overwrite_range) {
+            delete_sheet_data(spreadsheet_id, token, encoded_sheet_name, sheet_range);
+        } else if (options.overwrite_sheet) {
+            std::string empty_string = ""; // An empty string will clear the entire sheet
+            delete_sheet_data(spreadsheet_id, token, encoded_sheet_name, empty_string);    
+        } 
+        
         // Write out the headers to the file here in the Initialize so they are only written once
         // Create object ready to write to Google Sheet
         json sheet_data;
@@ -75,7 +189,7 @@ namespace duckdb
         sheet_data["range"] = sheet_range.empty() ? sheet_name : sheet_name + "!" + sheet_range;
         sheet_data["majorDimension"] = "ROWS";
 
-        vector<string> headers = bind_data.Cast<GSheetWriteBindData>().options.name_list;        
+        vector<string> headers = options.name_list;        
 
         vector<vector<string>> values;
         values.push_back(headers);
@@ -84,16 +198,17 @@ namespace duckdb
         // Convert the JSON object to a string
         std::string request_body = sheet_data.dump();
 
-        // Make the API call to write data to the Google Sheet
-        // Today, this is only append.
-        std::string response = call_sheets_api(spreadsheet_id, token, encoded_sheet_name, sheet_range, HttpMethod::POST, request_body);
-
-        // Check for errors in the response
-        json response_json = parseJson(response);
-        if (response_json.contains("error")) {
-            throw duckdb::IOException("Error writing to Google Sheet: " + response_json["error"]["message"].get<std::string>());
+        // Make the API call to write headers to the Google Sheet
+        // If we are appending, header defaults to false
+        if (options.header) {
+            std::string response = call_sheets_api(spreadsheet_id, token, encoded_sheet_name, sheet_range, HttpMethod::POST, request_body);
+        
+            // Check for errors in the response
+            json response_json = parseJson(response);
+            if (response_json.contains("error")) {
+                throw duckdb::IOException("Error writing to Google Sheet: " + response_json["error"]["message"].get<std::string>());
+            }
         }
-
         return make_uniq<GSheetCopyGlobalState>(context, spreadsheet_id, token, encoded_sheet_name);
     }
 
@@ -109,11 +224,24 @@ namespace duckdb
 
 
         std::string file = bind_data_p.Cast<GSheetWriteBindData>().files[0];
+        auto options = bind_data_p.Cast<GSheetWriteBindData>().options;
         std::string sheet_id = extract_sheet_id(file);
-        std::string sheet_range = extract_sheet_range(file);
-        std::string sheet_name = "Sheet1";
+        std::string sheet_name; 
+        std::string sheet_range;
 
-        sheet_name = get_sheet_name_from_id(gstate.spreadsheet_id, sheet_id, gstate.token);
+        // Prefer a sheet or range that is specified as a parameter over one on the query string
+        if (!options.sheet.empty()) {
+            sheet_name = options.sheet;
+        } else {
+            sheet_name = get_sheet_name_from_id(gstate.spreadsheet_id, sheet_id, gstate.token);
+        }
+        
+        if (!options.range.empty()) {
+            sheet_range = options.range;
+        } else {
+            sheet_range = extract_sheet_range(file);
+        }
+
         std::string encoded_sheet_name = url_encode(sheet_name);
         // Create object ready to write to Google Sheet
         json sheet_data;
@@ -144,7 +272,6 @@ namespace duckdb
         std::string request_body = sheet_data.dump();
 
         // Make the API call to write data to the Google Sheet
-        // Today, this is only append.
         std::string response = call_sheets_api(gstate.spreadsheet_id, gstate.token, encoded_sheet_name, sheet_range, HttpMethod::POST, request_body);
 
         // Check for errors in the response

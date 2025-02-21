@@ -22,6 +22,11 @@ namespace duckdb
     struct GSheetWriteOptions
     {
         vector<string> name_list;
+        std::string sheet;
+        std::string range;
+        bool overwrite_sheet;
+        bool overwrite_range;
+        bool header;
     };
 
     struct GSheetWriteBindData : public TableFunctionData
@@ -30,11 +35,16 @@ namespace duckdb
         GSheetWriteOptions options;
         vector<LogicalType> sql_types;
 
-        GSheetWriteBindData(string file_path, vector<LogicalType> sql_types, vector<string> names)
+        GSheetWriteBindData(string file_path, vector<LogicalType> sql_types, vector<string> names, std::string sheet, std::string range, bool overwrite_sheet, bool overwrite_range, bool header)
             : sql_types(std::move(sql_types))
         {
             files.push_back(std::move(file_path));
             options.name_list = std::move(names);
+            options.sheet = std::move(sheet);
+            options.range = std::move(range);
+            options.overwrite_sheet = std::move(overwrite_sheet);
+            options.overwrite_range = std::move(overwrite_range);
+            options.header = std::move(header);
         }
     };
 
