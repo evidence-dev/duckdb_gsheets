@@ -99,6 +99,46 @@ COPY <table_name> TO 'https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-
 
 -- Write a spreadsheet to a specific range using the range in the URL
 copy <table_name> to 'https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8/edit?gid=1385451074#gid=1385451074&range=C6:E10' (format gsheet);
+
+
+-- Write a spreadsheet to a specific sheet with the sheet parameter
+-- NOTE: A sheet parameter will take precedence over the query string
+copy <table_name> 
+to 'https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8/edit' 
+(format gsheet, sheet 'Woot');
+
+-- Write a spreadsheet to a specific range with the range parameter
+-- NOTE: A range parameter will take precedence over the query string
+copy <table_name> 
+to 'https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8/edit' 
+(format gsheet, sheet 'Woot', range 'B2:C10000');
+
+-- Only overwrite the range that is being written to
+copy <table_name> 
+to 'https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8/edit' 
+(format gsheet, sheet 'Woot', range 'B2:C10000', overwrite_range TRUE);
+
+-- Overwrite the entire sheet (this is the default)
+copy <table_name> 
+to 'https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8/edit' 
+(format gsheet, sheet 'Woot', range 'B2:C10000', overwrite_sheet TRUE);
+
+-- Append below existing data
+-- (by default, no header will be included)
+copy <table_name> 
+to 'https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8/edit' 
+(format gsheet, sheet 'Woot', range 'B2:C10000', overwrite_sheet FALSE, overwrite_range FALSE);
+
+-- Append below existing data, but force the output of a header
+copy <table_name> 
+to 'https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8/edit' 
+(format gsheet, sheet 'Woot', range 'B2:C10000', overwrite_sheet FALSE, overwrite_range FALSE, header TRUE);
+
+-- Write with no header
+copy <table_name> 
+to 'https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8/edit' 
+(format gsheet, header FALSE);
+
 ```
 
 ## Getting a Google API Access Token
