@@ -51,7 +51,6 @@ CREATE SECRET (
     PROVIDER key_file, 
     FILEPATH '<path_to_JSON_file_with_private_key>'
 );
-
 ```
 
 ### Read

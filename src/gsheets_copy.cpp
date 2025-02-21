@@ -151,14 +151,15 @@ namespace duckdb
 
         std::string token;
 
+
         auto options = bind_data.Cast<GSheetWriteBindData>().options;
+
 
         if (secret.GetProvider() == "key_file") {
             // If using a private key, retrieve the private key from the secret, but convert it 
             // into a token before use. This is an extra request per 30 minutes.
             // The secret is the JSON file that is extracted from Google as per the README
             token = get_token_and_cache(context, transaction, kv_secret);
-
         } else {
             Value token_value;
             if (!kv_secret->TryGetValue("token", token_value)) {

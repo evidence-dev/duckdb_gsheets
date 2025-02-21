@@ -145,7 +145,6 @@ unique_ptr<FunctionData> ReadSheetBind(ClientContext &context, TableFunctionBind
         // into a token before use. This is an extra request per 30 minutes.
         // The secret is the JSON file that is extracted from Google as per the README
         token = get_token_and_cache(context, transaction, kv_secret);
-
     } else {
         Value token_value;
         if (!kv_secret->TryGetValue("token", token_value)) {
@@ -155,9 +154,6 @@ unique_ptr<FunctionData> ReadSheetBind(ClientContext &context, TableFunctionBind
         token = token_value.ToString();
     }
 
-    // Get sheet name from URL
-    std::string sheet_id = extract_sheet_id(sheet_input);
-    sheet_name = get_sheet_name_from_id(spreadsheet_id, sheet_id, token);
 
     // Parse named parameters
     for (auto &kv : input.named_parameters) {
