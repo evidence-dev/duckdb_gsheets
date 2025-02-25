@@ -174,6 +174,7 @@ namespace duckdb
         std::string sheet_name; 
         std::string sheet_range;
 
+
         // Prefer a sheet or range that is specified as a parameter over one on the query string
         if (!options.sheet.empty()) {
             sheet_name = options.sheet;
@@ -213,6 +214,7 @@ namespace duckdb
 
         // Convert the JSON object to a string
         std::string request_body = sheet_data.dump();
+
 
         // Make the API call to write headers to the Google Sheet
         // If we are appending, header defaults to false
