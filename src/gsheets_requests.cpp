@@ -128,10 +128,11 @@ namespace duckdb
         return perform_https_request(host, path, token, method, body);
     }
 
-    std::string delete_sheet_data(const std::string &spreadsheet_id, const std::string &token, const std::string &sheet_name)
+    std::string delete_sheet_data(const std::string &spreadsheet_id, const std::string &token, const std::string &sheet_name, const std::string sheet_range)
     {
         std::string host = "sheets.googleapis.com";
-        std::string path = "/v4/spreadsheets/" + spreadsheet_id + "/values/" + sheet_name + ":clear";
+        std::string sheet_and_range = sheet_range.empty() ? sheet_name : sheet_name + "!" + sheet_range;
+        std::string path = "/v4/spreadsheets/" + spreadsheet_id + "/values/" + sheet_and_range + ":clear";
 
         return perform_https_request(host, path, token, HttpMethod::POST, "{}");
     }

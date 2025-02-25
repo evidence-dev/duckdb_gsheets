@@ -1,0 +1,186 @@
+# name: test/sql/copy_to.test
+# description: test COPY TO function
+# group: [gsheets]
+
+require-env TOKEN
+
+require gsheets
+
+# Create a secret NB must substitute a token, do not commit!
+statement ok
+create secret test_secret (
+    type gsheet, 
+    provider access_token, 
+    token '${TOKEN}'
+);
+
+# Create a table to copy to Google Sheet
+statement ok
+create table spreadsheets as 
+select 'Microsoft' as company, 'Excel' as product, 1985 as year_founded
+union all
+select 'Google', 'Google Sheets', 2006
+union all
+select 'Apple', 'Numbers', 1984
+union all
+select 'LibreOffice', 'Calc', 2000;
+
+# Copy the table to Google Sheet with ranged write
+statement ok
+copy spreadsheets to 'https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8/edit?gid=341836654#gid=341836654&range=C6:E10' (format gsheet, OVERWRITE_SHEET FALSE, OVERWRITE_RANGE TRUE);
+
+# Read the table from Google Sheet with ranged read
+query III
+from read_gsheet('https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8/edit?gid=341836654#gid=341836654&range=C6:E10');
+----
+Microsoft	Excel	1985
+Google	Google Sheets	2006
+Apple	Numbers	1984
+LibreOffice	Calc	2000
+
+###################
+# Overwrite Range #
+###################
+
+# Copy the table to Google Sheet with ranged write and overwriting just the range
+statement ok
+copy spreadsheets to 'https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8/edit?gid=341836654#gid=341836654&range=C6:E10' (format gsheet, OVERWRITE_SHEET FALSE, OVERWRITE_RANGE TRUE);
+
+
+# Read the table from Google Sheet with ranged read
+query III
+from read_gsheet('https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8/edit?gid=341836654#gid=341836654&range=C6:E10');
+----
+Microsoft	Excel	1985
+Google	Google Sheets	2006
+Apple	Numbers	1984
+LibreOffice	Calc	2000
+
+# Also check that other cells before the range were not cleared out
+query I
+from read_gsheet('https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8/edit?gid=341836654#gid=341836654&range=A2', header=false);
+----
+leave this cell alone
+
+# Also check that other cells after the range were not cleared out
+query I
+from read_gsheet('https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8/edit?gid=341836654#gid=341836654&range=H14', header=false);
+----
+More leaving alone
+
+###################
+# Overwrite Sheet #
+###################
+
+# For this test, write data into 2 places, but on the second write, overwrite.
+# Then, reading from the first place should return nothing
+statement ok
+copy spreadsheets to 'https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8/edit?gid=768509192#gid=768509192&range=A1' (format gsheet, OVERWRITE_SHEET FALSE, OVERWRITE_RANGE TRUE);
+
+statement ok
+copy spreadsheets to 'https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8/edit?gid=768509192#gid=768509192&range=F10' (format gsheet, OVERWRITE_SHEET TRUE);
+
+# Return nothing (which shows the overwrite succeeded)
+statement error
+from read_gsheet('https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8/edit?gid=768509192#gid=768509192&range=A1', header=false);
+----
+Invalid Input Error: Range 'Ranged Write Overwrite Sheet'!A1 is empty
+
+
+##########
+# APPEND #
+##########
+
+# What do I do with the header? I guess I should allow it to be disabled. Otherwise append is not useful.
+
+statement ok
+copy spreadsheets to 'https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8/edit?gid=1902090053#gid=1902090053&range=A1' (format gsheet, OVERWRITE_SHEET TRUE, OVERWRITE_RANGE FALSE);
+
+statement ok
+copy spreadsheets to 'https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8/edit?gid=1902090053#gid=1902090053&range=A3' (format gsheet, OVERWRITE_SHEET FALSE, OVERWRITE_RANGE FALSE);
+
+
+
+
+# TODO: Repull the data I expect to see once the append completes
+
+
+
+
+##########
+# Params #
+##########
+
+
+# Pass in the sheet as a parameter, still include the gid and range on the qs
+# (prefer the sheet in the parameter)
+statement ok
+copy spreadsheets to 'https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8/edit?gid=1902090053#gid=1902090053&range=C6:E11' (format gsheet, SHEET 'Ranged Write Overwrite Sheet', OVERWRITE_SHEET TRUE, OVERWRITE_RANGE FALSE);
+
+
+# Repull the data I expect to see once the copy completes
+query III
+from read_gsheet('https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8/edit?gid=768509192#gid=768509192&range=C6:E11');
+----
+Microsoft	Excel	1985
+Google	Google Sheets	2006
+Apple	Numbers	1984
+LibreOffice	Calc	2000
+
+
+# Pass in the sheet and range as parameters, still include the gid and range on the qs
+# (prefer the sheet and range in the parameters)
+statement ok
+copy spreadsheets to 'https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8/edit?gid=1902090053#gid=1902090053&range=B3:D7' (format gsheet, SHEET 'Ranged Write Overwrite Sheet', RANGE 'C16:E20', OVERWRITE_SHEET TRUE, OVERWRITE_RANGE FALSE);
+
+
+# Repull the data I expect to see once the copy completes
+query III
+from read_gsheet('https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8/edit?gid=768509192#gid=768509192&range=C16:E20');
+----
+Microsoft	Excel	1985
+Google	Google Sheets	2006
+Apple	Numbers	1984
+LibreOffice	Calc	2000
+
+
+# Pass in the sheet and range as parameters (neither sheet nor range on the qs)
+statement ok
+copy spreadsheets to 'https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8/edit' (format gsheet, SHEET 'Ranged Write Overwrite Sheet', RANGE 'C26:E30', OVERWRITE_SHEET TRUE, OVERWRITE_RANGE FALSE);
+
+
+# Repull the data I expect to see once the copy completes
+query III
+from read_gsheet('https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8/edit?gid=768509192#gid=768509192&range=C26:E30');
+----
+Microsoft	Excel	1985
+Google	Google Sheets	2006
+Apple	Numbers	1984
+LibreOffice	Calc	2000
+
+
+# Set header to false
+statement ok
+copy spreadsheets to 'https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8/edit?gid=768509192#gid=768509192&range=A1:C5' (format gsheet, OVERWRITE_SHEET TRUE, HEADER FALSE);
+
+# Repull the data I expect to see once the copy completes
+query III
+from read_gsheet('https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8/edit?gid=768509192#gid=768509192');
+----
+Google	Google Sheets	2006
+Apple	Numbers	1984
+LibreOffice	Calc	2000
+
+# Set header to true explicitly
+
+statement ok
+copy spreadsheets to 'https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8/edit?gid=768509192#gid=768509192&range=A1' (format gsheet, OVERWRITE_SHEET TRUE, HEADER TRUE);
+
+# Repull the data I expect to see once the copy completes
+query III
+from read_gsheet('https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8/edit?gid=768509192#gid=768509192');
+----
+Microsoft	Excel	1985
+Google	Google Sheets	2006
+Apple	Numbers	1984
+LibreOffice	Calc	2000

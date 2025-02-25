@@ -9,6 +9,7 @@
 #include "gsheets_get_token.hpp"
 #include <iostream>
 
+
 namespace duckdb {
 
 using json = nlohmann::json;
@@ -144,7 +145,6 @@ unique_ptr<FunctionData> ReadSheetBind(ClientContext &context, TableFunctionBind
         // into a token before use. This is an extra request per 30 minutes.
         // The secret is the JSON file that is extracted from Google as per the README
         token = get_token_and_cache(context, transaction, kv_secret);
-
     } else {
         Value token_value;
         if (!kv_secret->TryGetValue("token", token_value)) {
@@ -153,6 +153,7 @@ unique_ptr<FunctionData> ReadSheetBind(ClientContext &context, TableFunctionBind
 
         token = token_value.ToString();
     }
+
 
     // Parse named parameters
     for (auto &kv : input.named_parameters) {
