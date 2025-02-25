@@ -94,6 +94,9 @@ COPY <table_name> TO 'https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-
 
 -- Write a spreadsheet to a specific sheet using the sheet id in the URL
 COPY <table_name> TO 'https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8/edit?gid=1295634987#gid=1295634987' (FORMAT gsheet);
+
+-- Write a spreadsheet to a specific range using the range in the URL
+copy <table_name> to 'https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8/edit?gid=1385451074#gid=1385451074&range=C6:E10' (format gsheet);
 ```
 
 ## Getting a Google API Access Token

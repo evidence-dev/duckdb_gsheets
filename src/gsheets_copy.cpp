@@ -70,6 +70,7 @@ namespace duckdb
         }
         std::string spreadsheet_id = extract_spreadsheet_id(file_path);
         std::string sheet_id = extract_sheet_id(file_path);
+        std::string sheet_range = extract_sheet_range(file_path);
         std::string sheet_name = "Sheet1";
 
         sheet_name = get_sheet_name_from_id(spreadsheet_id, sheet_id, token);
@@ -84,9 +85,9 @@ namespace duckdb
         // Create object ready to write to Google Sheet
         json sheet_data;
 
-        sheet_data["range"] = sheet_name;
+        sheet_data["range"] = sheet_range.empty() ? sheet_name : sheet_name + "!" + sheet_range;
         sheet_data["majorDimension"] = "ROWS";
-        
+
         vector<string> headers = bind_data.Cast<GSheetWriteBindData>().options.name_list;        
 
         vector<vector<string>> values;
@@ -98,8 +99,7 @@ namespace duckdb
 
         // Make the API call to write data to the Google Sheet
         // Today, this is only append.
-        // TODO: add support for ranged writes https://developers.google.com/sheets/api/samples/writing
-        std::string response = call_sheets_api(spreadsheet_id, token, encoded_sheet_name, "", HttpMethod::POST, request_body);
+        std::string response = call_sheets_api(spreadsheet_id, token, encoded_sheet_name, sheet_range, HttpMethod::POST, request_body);
 
         // Check for errors in the response
         json response_json = parseJson(response);
@@ -120,8 +120,10 @@ namespace duckdb
         input.Flatten();
         auto &gstate = gstate_p.Cast<GSheetCopyGlobalState>();
 
-        std::string sheet_id = extract_sheet_id(bind_data_p.Cast<GSheetWriteBindData>().files[0]);
 
+        std::string file = bind_data_p.Cast<GSheetWriteBindData>().files[0];
+        std::string sheet_id = extract_sheet_id(file);
+        std::string sheet_range = extract_sheet_range(file);
         std::string sheet_name = "Sheet1";
 
         sheet_name = get_sheet_name_from_id(gstate.spreadsheet_id, sheet_id, gstate.token);
@@ -129,8 +131,8 @@ namespace duckdb
         // Create object ready to write to Google Sheet
         json sheet_data;
 
-        sheet_data["range"] = sheet_name;
-        sheet_data["majorDimension"] = "ROWS";    
+        sheet_data["range"] = sheet_range.empty() ? sheet_name : sheet_name + "!" + sheet_range;
+        sheet_data["majorDimension"] = "ROWS";
 
         vector<vector<string>> values;
 
@@ -156,8 +158,7 @@ namespace duckdb
 
         // Make the API call to write data to the Google Sheet
         // Today, this is only append.
-        // TODO: add support for ranged writes https://developers.google.com/sheets/api/samples/writing
-        std::string response = call_sheets_api(gstate.spreadsheet_id, gstate.token, encoded_sheet_name, "", HttpMethod::POST, request_body);
+        std::string response = call_sheets_api(gstate.spreadsheet_id, gstate.token, encoded_sheet_name, sheet_range, HttpMethod::POST, request_body);
 
         // Check for errors in the response
         json response_json = parseJson(response);
