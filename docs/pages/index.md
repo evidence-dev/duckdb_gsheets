@@ -32,6 +32,7 @@ The latest version of [DuckDB](https://duckdb.org/docs/installation) (currently 
 
 ```sql
 -- Authenticate with Google Account in the browser (default)
+--   note: typically expires in one hour
 CREATE SECRET (TYPE gsheet);
 
 
