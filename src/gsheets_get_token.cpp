@@ -188,7 +188,7 @@ namespace duckdb
         auto old_secret = secret_manager.GetSecretByName(transaction, secret_name);
         auto persist_type = old_secret->persist_type;
         auto storage_mode = old_secret->storage_mode;
-        CreateSecretInfo create_secret_info = CreateSecretInfo(OnCreateConflict::REPLACE_ON_CONFLICT, persist_type);
+        auto create_secret_info = make_uniq<CreateSecretInfo>(OnCreateConflict::REPLACE_ON_CONFLICT, persist_type);
 
         // Copy the old secret (to get metadata about the secret we want to maintain)
         auto new_secret = old_secret->secret->Clone().get();
