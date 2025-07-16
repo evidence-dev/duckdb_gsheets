@@ -1,29 +1,17 @@
 #define DUCKDB_EXTENSION_MAIN
 
-// TODO
-// - Remove standard library functions and types and replace with DuckDB types and functions
-// - Remove JSON library and use DuckDB JSON functions instead?
-// - Remove OpenSSL and use DuckDB HTTPFS functions instead?
-// - Fix larger read_gsheet response parsing which currently contains unescaped range characters
-// - Handle types better throughout
-// - OAuth flow for token management
-// - Docs: how to get a token
-// - Tests: Copy
-
-
-
 #include "duckdb.hpp"
+
+#ifndef DUCKDB_CPP_EXTENSION_ENTRY
 #include "duckdb/main/extension_util.hpp"
-#include "duckdb/function/table_function.hpp"
-#include "duckdb/main/config.hpp"
+#endif
+
 #include "duckdb/parser/expression/constant_expression.hpp"
 #include "duckdb/parser/expression/function_expression.hpp"
 #include "duckdb/parser/tableref/table_function_ref.hpp"
 
-
 // Standard library
 #include <string>
-
 
 // GSheets extension
 #include "gsheets_extension.hpp"
@@ -37,8 +25,6 @@
 #include <openssl/err.h>
 #include <openssl/bio.h>
 
-
-
 namespace duckdb {
 
 #include <string>
@@ -46,9 +32,8 @@ namespace duckdb {
 #include <sstream>
 #include <algorithm>
 
-
 unique_ptr<TableRef> ReadSheetReplacement(ClientContext &context, ReplacementScanInput &input,
-                                            optional_ptr<ReplacementScanData> data) {
+                                          optional_ptr<ReplacementScanData> data) {
 	auto table_name = ReplacementScan::GetFullPath(input);
 	if (!StringUtil::StartsWith(table_name, "https://docs.google.com/spreadsheets/d/")) {
 		return nullptr;
@@ -66,38 +51,50 @@ unique_ptr<TableRef> ReadSheetReplacement(ClientContext &context, ReplacementSca
 	return std::move(table_function);
 }
 
+#ifdef DUCKDB_CPP_EXTENSION_ENTRY
+static void LoadInternal(ExtensionLoader &loader) {
+#else
+static void LoadInternal(DatabaseInstance &db) {
+#endif
+	// Initialize OpenSSL
+	SSL_library_init();
+	SSL_load_error_strings();
+	OpenSSL_add_all_algorithms();
 
+	// Register read_gsheet table function
+	TableFunction read_gsheet_function("read_gsheet", {LogicalType::VARCHAR}, ReadSheetFunction, ReadSheetBind);
+	read_gsheet_function.named_parameters["header"] = LogicalType::BOOLEAN;
+	read_gsheet_function.named_parameters["sheet"] = LogicalType::VARCHAR;
+	read_gsheet_function.named_parameters["range"] = LogicalType::VARCHAR;
+	read_gsheet_function.named_parameters["all_varchar"] = LogicalType::BOOLEAN;
 
-static void LoadInternal(DatabaseInstance &instance) {
-    // Initialize OpenSSL
-    SSL_library_init();
-    SSL_load_error_strings();
-    OpenSSL_add_all_algorithms();
-    
+	GSheetCopyFunction gsheet_copy_function;
 
-    // Register read_gsheet table function
-    TableFunction read_gsheet_function("read_gsheet", {LogicalType::VARCHAR}, ReadSheetFunction, ReadSheetBind);
-    read_gsheet_function.named_parameters["header"] = LogicalType::BOOLEAN;
-    read_gsheet_function.named_parameters["sheet"] = LogicalType::VARCHAR;
-    read_gsheet_function.named_parameters["range"] = LogicalType::VARCHAR;
-    read_gsheet_function.named_parameters["all_varchar"] = LogicalType::BOOLEAN;
-    ExtensionUtil::RegisterFunction(instance, read_gsheet_function);
+#ifdef DUCKDB_CPP_EXTENSION_ENTRY
+	loader.RegisterFunction(read_gsheet_function);
+	loader.RegisterFunction(gsheet_copy_function);
+	CreateGsheetSecretFunctions::Register(loader);
+	auto &config = DBConfig::GetConfig(loader.GetDatabaseInstance());
+#else
+	ExtensionUtil::RegisterFunction(db, read_gsheet_function);
+	ExtensionUtil::RegisterFunction(db, gsheet_copy_function);
+	CreateGsheetSecretFunctions::Register(db);
+	auto &config = DBConfig::GetConfig(db);
+#endif
 
-    // Register COPY TO (FORMAT 'gsheet') function
-    GSheetCopyFunction gsheet_copy_function;
-    ExtensionUtil::RegisterFunction(instance, gsheet_copy_function);
-
-    // Register Secret functions
-	CreateGsheetSecretFunctions::Register(instance);
-
-    // Register replacement scan for read_gsheet
-    auto &config = DBConfig::GetConfig(instance);
-    config.replacement_scans.emplace_back(ReadSheetReplacement);
+	config.replacement_scans.emplace_back(ReadSheetReplacement);
 }
 
+#ifdef DUCKDB_CPP_EXTENSION_ENTRY
+void GsheetsExtension::Load(ExtensionLoader &loader) {
+	LoadInternal(loader);
+}
+#else
 void GsheetsExtension::Load(DuckDB &db) {
 	LoadInternal(*db.instance);
 }
+#endif
+
 std::string GsheetsExtension::Name() {
 	return "gsheets";
 }
@@ -114,14 +111,20 @@ std::string GsheetsExtension::Version() const {
 
 extern "C" {
 
+#ifdef DUCKDB_CPP_EXTENSION_ENTRY
+DUCKDB_CPP_EXTENSION_ENTRY(gsheets, loader) {
+	duckdb::LoadInternal(loader);
+}
+#else
 DUCKDB_EXTENSION_API void gsheets_init(duckdb::DatabaseInstance &db) {
-    duckdb::DuckDB db_wrapper(db);
-    db_wrapper.LoadExtension<duckdb::GsheetsExtension>();
+	duckdb::DuckDB db_wrapper(db);
+	db_wrapper.LoadExtension<duckdb::GsheetsExtension>();
 }
 
 DUCKDB_EXTENSION_API const char *gsheets_version() {
 	return duckdb::DuckDB::LibraryVersion();
 }
+#endif
 }
 
 #ifndef DUCKDB_EXTENSION_MAIN
