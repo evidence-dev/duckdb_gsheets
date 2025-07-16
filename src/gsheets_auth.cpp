@@ -1,10 +1,10 @@
 #include "gsheets_auth.hpp"
+#include "duckdb/main/extension/extension_loader.hpp"
 #include "gsheets_requests.hpp"
 #include "gsheets_utils.hpp"
 #include "gsheets_get_token.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/main/secret/secret.hpp"
-#include "duckdb/main/extension_util.hpp"
 #include <fstream>
 #include <cstdlib>
 #include <json.hpp>
@@ -121,7 +121,7 @@ namespace duckdb
         return std::move(result);
     }
 
-    void CreateGsheetSecretFunctions::Register(DatabaseInstance &instance)
+    void CreateGsheetSecretFunctions::Register(ExtensionLoader &loader)
     {
         string type = "gsheet";
 
@@ -130,25 +130,25 @@ namespace duckdb
         secret_type.name = type;
         secret_type.deserializer = KeyValueSecret::Deserialize<KeyValueSecret>;
         secret_type.default_provider = "oauth";
-        ExtensionUtil::RegisterSecretType(instance, secret_type);
+        loader.RegisterSecretType(secret_type);
 
         // Register the access_token secret provider
-        CreateSecretFunction access_token_function = {type, "access_token", CreateGsheetSecretFromAccessToken};
+        CreateSecretFunction access_token_function = {type, "access_token", CreateGsheetSecretFromAccessToken, {}};
         access_token_function.named_parameters["access_token"] = LogicalType::VARCHAR;
         RegisterCommonSecretParameters(access_token_function);
-        ExtensionUtil::RegisterFunction(instance, access_token_function);
+        loader.RegisterFunction(access_token_function);
 
         // Register the oauth secret provider
-        CreateSecretFunction oauth_function = {type, "oauth", CreateGsheetSecretFromOAuth};
+        CreateSecretFunction oauth_function = {type, "oauth", CreateGsheetSecretFromOAuth, {}};
         oauth_function.named_parameters["use_oauth"] = LogicalType::BOOLEAN;
         RegisterCommonSecretParameters(oauth_function);
-        ExtensionUtil::RegisterFunction(instance, oauth_function);
+        loader.RegisterFunction(oauth_function);
 
         // Register the key_file secret provider
-        CreateSecretFunction key_file_function = {type, "key_file", CreateGsheetSecretFromKeyFile};
+        CreateSecretFunction key_file_function = {type, "key_file", CreateGsheetSecretFromKeyFile, {}};
         key_file_function.named_parameters["filepath"] = LogicalType::VARCHAR;
         RegisterCommonSecretParameters(key_file_function);
-        ExtensionUtil::RegisterFunction(instance, key_file_function);
+        loader.RegisterFunction(key_file_function);
     }
 
     std::string InitiateOAuthFlow()
@@ -168,9 +168,9 @@ namespace duckdb
                                        "&state=" + state;
 
         // Instruct the user to visit the URL and grant permission
-        std::cout << "Visit the below URL to authorize DuckDB GSheets" << std::endl << std::endl;
-        std::cout << auth_request_url << std::endl << std::endl;
-        
+        std::cout << "Visit the below URL to authorize DuckDB GSheets" << '\n';
+        std::cout << auth_request_url << '\n';
+
 
         // Open the URL in the user's default browser
         #ifdef _WIN32

@@ -12,7 +12,7 @@ std::string InitiateOAuthFlow();
 struct CreateGsheetSecretFunctions {
 public:
 	//! Register all CreateSecretFunctions
-	static void Register(DatabaseInstance &instance);
+	static void Register(ExtensionLoader &loader);
 };
 
 }  // namespace duckdb
