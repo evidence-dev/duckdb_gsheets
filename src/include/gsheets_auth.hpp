@@ -1,7 +1,7 @@
 #pragma once
 
 #include <string>
-#include "duckdb/main/database.hpp"
+#include "duckdb.hpp"
 
 namespace duckdb {
 
@@ -12,7 +12,11 @@ std::string InitiateOAuthFlow();
 struct CreateGsheetSecretFunctions {
 public:
 	//! Register all CreateSecretFunctions
+#ifdef DUCKDB_CPP_EXTENSION_ENTRY
 	static void Register(ExtensionLoader &loader);
+#else
+	static void Register(DatabaseInstance &db);
+#endif
 };
 
 }  // namespace duckdb
