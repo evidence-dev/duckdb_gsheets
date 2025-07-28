@@ -117,7 +117,7 @@ std::string call_sheets_api(const std::string &spreadsheet_id, const std::string
 }
 
 std::string delete_sheet_data(const std::string &spreadsheet_id, const std::string &token,
-                              const std::string &sheet_name, const std::string sheet_range) {
+                              const std::string &sheet_name, const std::string &sheet_range) {
 	std::string host = "sheets.googleapis.com";
 	std::string sheet_and_range = sheet_range.empty() ? sheet_name : sheet_name + "!" + sheet_range;
 	std::string path = "/v4/spreadsheets/" + spreadsheet_id + "/values/" + sheet_and_range + ":clear";
