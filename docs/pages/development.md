@@ -13,7 +13,7 @@ Note: VCPKG is only required for extensions that want to rely on it for dependen
 ### Build steps
 Now to build the extension, run:
 ```sh
-make
+GEN=ninja make
 ```
 The main binaries that will be built are:
 ```sh
@@ -30,10 +30,12 @@ To run the extension code, simply start the shell with `./build/release/duckdb`.
 
 Now we can use the features from the extension directly in DuckDB.
 
-## Running the tests
+## Running the tests\
+To run the test suite, you need to generate a token for the Google Sheets API, follow the instructions in the README file to get one.
+
 Different tests can be created for DuckDB extensions. The primary way of testing DuckDB extensions should be the SQL tests in `./test/sql`. These SQL tests can be run using:
 ```sh
-make test
+TOKEN=your-token-here GEN=ninja make test
 ```
 
 ### Installing the deployed binaries

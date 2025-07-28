@@ -14,3 +14,4 @@ credentials.json
 compile_commands.json
 .cache/clangd/
 .helix/
+service-account-credentials.json
