@@ -15,7 +15,7 @@ std::string call_sheets_api(const std::string &spreadsheet_id, const std::string
                             const std::string &body = "");
 
 std::string delete_sheet_data(const std::string &spreadsheet_id, const std::string &token,
-                              const std::string &sheet_name, const std::string sheet_range);
+                              const std::string &sheet_name, const std::string &sheet_range);
 
 std::string get_spreadsheet_metadata(const std::string &spreadsheet_id, const std::string &token);
 } // namespace duckdb
