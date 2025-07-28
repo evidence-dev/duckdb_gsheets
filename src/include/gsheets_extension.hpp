@@ -6,11 +6,11 @@ namespace duckdb {
 
 class GsheetsExtension : public Extension {
 public:
-	#ifdef DUCKDB_CPP_EXTENSION_ENTRY
+#ifdef DUCKDB_CPP_EXTENSION_ENTRY
 	void Load(ExtensionLoader &loader) override;
-	#else
+#else
 	void Load(DuckDB &db) override;
-	#endif
+#endif
 	std::string Name() override;
 	std::string Version() const override;
 };
