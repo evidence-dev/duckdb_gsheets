@@ -68,3 +68,22 @@ After running these steps, you can install and load your extension using the reg
 INSTALL gsheets
 LOAD gsheets
 ```
+
+## Formatting
+
+- Install clang-format (e.g. `brew install clang-format`)
+- Install cmake-format (e.g. `pip install cmake-format`)
+
+```sh
+$ clang-format --version
+clang-format version 20.1.8
+```
+
+```sh
+$ cmake-format --version
+0.6.13
+```
+
+```sh
+make format
+```
