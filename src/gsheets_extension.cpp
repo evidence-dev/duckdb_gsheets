@@ -2,10 +2,6 @@
 
 #include "duckdb.hpp"
 
-#ifndef DUCKDB_CPP_EXTENSION_ENTRY
-#include "duckdb/main/extension_util.hpp"
-#endif
-
 #include "duckdb/parser/expression/constant_expression.hpp"
 #include "duckdb/parser/expression/function_expression.hpp"
 #include "duckdb/parser/tableref/table_function_ref.hpp"
@@ -51,11 +47,7 @@ unique_ptr<TableRef> ReadSheetReplacement(ClientContext &context, ReplacementSca
 	return std::move(table_function);
 }
 
-#ifdef DUCKDB_CPP_EXTENSION_ENTRY
 static void LoadInternal(ExtensionLoader &loader) {
-#else
-static void LoadInternal(DatabaseInstance &db) {
-#endif
 	// Initialize OpenSSL
 	SSL_library_init();
 	SSL_load_error_strings();
@@ -70,30 +62,17 @@ static void LoadInternal(DatabaseInstance &db) {
 
 	GSheetCopyFunction gsheet_copy_function;
 
-#ifdef DUCKDB_CPP_EXTENSION_ENTRY
 	loader.RegisterFunction(read_gsheet_function);
 	loader.RegisterFunction(gsheet_copy_function);
 	CreateGsheetSecretFunctions::Register(loader);
 	auto &config = DBConfig::GetConfig(loader.GetDatabaseInstance());
-#else
-	ExtensionUtil::RegisterFunction(db, read_gsheet_function);
-	ExtensionUtil::RegisterFunction(db, gsheet_copy_function);
-	CreateGsheetSecretFunctions::Register(db);
-	auto &config = DBConfig::GetConfig(db);
-#endif
 
 	config.replacement_scans.emplace_back(ReadSheetReplacement);
 }
 
-#ifdef DUCKDB_CPP_EXTENSION_ENTRY
 void GsheetsExtension::Load(ExtensionLoader &loader) {
 	LoadInternal(loader);
 }
-#else
-void GsheetsExtension::Load(DuckDB &db) {
-	LoadInternal(*db.instance);
-}
-#endif
 
 std::string GsheetsExtension::Name() {
 	return "gsheets";
@@ -111,20 +90,9 @@ std::string GsheetsExtension::Version() const {
 
 extern "C" {
 
-#ifdef DUCKDB_CPP_EXTENSION_ENTRY
 DUCKDB_CPP_EXTENSION_ENTRY(gsheets, loader) {
 	duckdb::LoadInternal(loader);
 }
-#else
-DUCKDB_EXTENSION_API void gsheets_init(duckdb::DatabaseInstance &db) {
-	duckdb::DuckDB db_wrapper(db);
-	db_wrapper.LoadExtension<duckdb::GsheetsExtension>();
-}
-
-DUCKDB_EXTENSION_API const char *gsheets_version() {
-	return duckdb::DuckDB::LibraryVersion();
-}
-#endif
 }
 
 #ifndef DUCKDB_EXTENSION_MAIN
