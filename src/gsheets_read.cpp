@@ -267,7 +267,7 @@ unique_ptr<FunctionData> ReadSheetBind(ClientContext &context, TableFunctionBind
 	bind_data->names = names;
 	bind_data->return_types = return_types;
 
-	return bind_data;
+	return std::move(bind_data);
 }
 
 } // namespace duckdb

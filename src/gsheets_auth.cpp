@@ -1,9 +1,5 @@
 #include "duckdb.hpp"
 
-#ifndef DUCKDB_CPP_EXTENSION_ENTRY
-#include "duckdb/main/extension_util.hpp"
-#endif
-
 #include "gsheets_auth.hpp"
 #include "gsheets_utils.hpp"
 #include "gsheets_get_token.hpp"
@@ -117,12 +113,7 @@ static unique_ptr<BaseSecret> CreateGsheetSecretFromKeyFile(ClientContext &conte
 	return std::move(result);
 }
 
-#ifdef DUCKDB_CPP_EXTENSION_ENTRY
-void CreateGsheetSecretFunctions::Register(ExtensionLoader &loader)
-#else
-void CreateGsheetSecretFunctions::Register(DatabaseInstance &db)
-#endif
-{
+void CreateGsheetSecretFunctions::Register(ExtensionLoader &loader) {
 	string type = "gsheet";
 
 	// Register the new type
@@ -146,17 +137,10 @@ void CreateGsheetSecretFunctions::Register(DatabaseInstance &db)
 	key_file_function.named_parameters["filepath"] = LogicalType::VARCHAR;
 	RegisterCommonSecretParameters(key_file_function);
 
-#ifdef DUCKDB_CPP_EXTENSION_ENTRY
 	loader.RegisterSecretType(secret_type);
 	loader.RegisterFunction(access_token_function);
 	loader.RegisterFunction(oauth_function);
 	loader.RegisterFunction(key_file_function);
-#else
-	ExtensionUtil::RegisterSecretType(db, secret_type);
-	ExtensionUtil::RegisterFunction(db, access_token_function);
-	ExtensionUtil::RegisterFunction(db, oauth_function);
-	ExtensionUtil::RegisterFunction(db, key_file_function);
-#endif
 }
 
 std::string InitiateOAuthFlow() {
