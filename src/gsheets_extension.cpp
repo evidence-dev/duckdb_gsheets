@@ -48,10 +48,12 @@ unique_ptr<TableRef> ReadSheetReplacement(ClientContext &context, ReplacementSca
 }
 
 static void LoadInternal(ExtensionLoader &loader) {
+#ifndef EMSCRIPTEN
 	// Initialize OpenSSL
 	SSL_library_init();
 	SSL_load_error_strings();
 	OpenSSL_add_all_algorithms();
+#endif
 
 	// Register read_gsheet table function
 	TableFunction read_gsheet_function("read_gsheet", {LogicalType::VARCHAR}, ReadSheetFunction, ReadSheetBind);
