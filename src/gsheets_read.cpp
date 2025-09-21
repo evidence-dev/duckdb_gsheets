@@ -195,7 +195,7 @@ unique_ptr<FunctionData> ReadSheetBind(ClientContext &context, TableFunctionBind
 			}
 
 			// Validate that sheet with name exists for better error messaging
-			sheet_id = get_sheet_id_from_name(spreadsheet_id, sheet_name, token);
+			sheet_id = get_sheet_id_from_name(context, spreadsheet_id, sheet_name, token);
 		} else if (kv.first == "range") {
 			sheet_range = kv.second.GetValue<string>();
 		}
@@ -206,9 +206,9 @@ unique_ptr<FunctionData> ReadSheetBind(ClientContext &context, TableFunctionBind
 		sheet_id = extract_sheet_id(sheet_input);
 		if (sheet_id.empty()) {
 			// Fallback to first sheet by index
-			sheet_name = get_sheet_name_from_index(spreadsheet_id, "0", token);
+			sheet_name = get_sheet_name_from_index(context, spreadsheet_id, "0", token);
 		} else {
-			sheet_name = get_sheet_name_from_id(spreadsheet_id, sheet_id, token);
+			sheet_name = get_sheet_name_from_id(context, spreadsheet_id, sheet_id, token);
 		}
 	}
 

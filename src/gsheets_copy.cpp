@@ -177,7 +177,7 @@ unique_ptr<GlobalFunctionData> GSheetCopyFunction::GSheetWriteInitializeGlobal(C
 	if (!options.sheet.empty()) {
 		sheet_name = options.sheet;
 	} else {
-		sheet_name = get_sheet_name_from_id(spreadsheet_id, sheet_id, token);
+		sheet_name = get_sheet_name_from_id(context, spreadsheet_id, sheet_id, token);
 	}
 
 	if (!options.range.empty()) {
@@ -249,7 +249,7 @@ void GSheetCopyFunction::GSheetWriteSink(ExecutionContext &context, FunctionData
 	if (!options.sheet.empty()) {
 		sheet_name = options.sheet;
 	} else {
-		sheet_name = get_sheet_name_from_id(gstate.spreadsheet_id, sheet_id, gstate.token);
+		sheet_name = get_sheet_name_from_id(context.client, gstate.spreadsheet_id, sheet_id, gstate.token);
 	}
 
 	if (!options.range.empty()) {

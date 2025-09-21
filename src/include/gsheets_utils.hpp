@@ -9,6 +9,8 @@ using json = nlohmann::json;
 
 namespace duckdb {
 
+class ClientContext;
+
 /**
  * Extracts the sheet ID from a Google Sheets URL or returns the input if it's already a sheet ID.
  * @param input A Google Sheets URL or sheet ID
@@ -38,7 +40,7 @@ std::string extract_sheet_range(const std::string &input);
  * @param token The Google API token
  * @return The sheet name
  */
-std::string get_sheet_name_from_id(const std::string &spreadsheet_id, const std::string &sheet_id,
+std::string get_sheet_name_from_id(ClientContext &context, const std::string &spreadsheet_id, const std::string &sheet_id,
                                    const std::string &token);
 
 /**
@@ -48,7 +50,7 @@ std::string get_sheet_name_from_id(const std::string &spreadsheet_id, const std:
  * @param token The Google API token
  * @return The sheet name
  */
-std::string get_sheet_name_from_index(const std::string &spreadsheet_id, const std::string &sheet_index,
+std::string get_sheet_name_from_index(ClientContext &context, const std::string &spreadsheet_id, const std::string &sheet_index,
                                       const std::string &token);
 
 /**
@@ -58,7 +60,7 @@ std::string get_sheet_name_from_index(const std::string &spreadsheet_id, const s
  * @param token The Google API token
  * @return The sheet ID
  */
-std::string get_sheet_id_from_name(const std::string &spreadsheet_id, const std::string &sheet_name,
+std::string get_sheet_id_from_name(ClientContext &context, const std::string &spreadsheet_id, const std::string &sheet_name,
                                    const std::string &token);
 
 struct SheetData {
