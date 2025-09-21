@@ -14,10 +14,10 @@ namespace duckdb {
 using json = nlohmann::json;
 
 ReadSheetBindData::ReadSheetBindData(string spreadsheet_id, string token, bool header, string sheet_name,
-                                     string sheet_range)
+                                     string sheet_range, ClientContext &context)
     : spreadsheet_id(spreadsheet_id), token(token), finished(false), row_index(0), header(header),
       sheet_name(sheet_name), sheet_range(sheet_range) {
-	response = call_sheets_api(spreadsheet_id, token, sheet_name, sheet_range, HttpMethod::GET);
+	response = call_sheets_api(context, spreadsheet_id, token, sheet_name, sheet_range, HttpMethod::GET);
 }
 
 bool IsValidNumber(const string &value) {
@@ -214,7 +214,7 @@ unique_ptr<FunctionData> ReadSheetBind(ClientContext &context, TableFunctionBind
 
 	std::string encoded_sheet_name = url_encode(sheet_name);
 
-	auto bind_data = make_uniq<ReadSheetBindData>(spreadsheet_id, token, header, encoded_sheet_name, sheet_range);
+	auto bind_data = make_uniq<ReadSheetBindData>(spreadsheet_id, token, header, encoded_sheet_name, sheet_range, context);
 
 	json cleanJson = parseJson(bind_data->response);
 	SheetData sheet_data = getSheetData(cleanJson);
