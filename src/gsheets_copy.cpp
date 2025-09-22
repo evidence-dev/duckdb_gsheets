@@ -177,7 +177,7 @@ unique_ptr<GlobalFunctionData> GSheetCopyFunction::GSheetWriteInitializeGlobal(C
 	if (!options.sheet.empty()) {
 		sheet_name = options.sheet;
 	} else {
-		sheet_name = get_sheet_name_from_id(spreadsheet_id, sheet_id, token);
+		sheet_name = get_sheet_name_from_id(context, spreadsheet_id, sheet_id, token);
 	}
 
 	if (!options.range.empty()) {
@@ -191,10 +191,10 @@ unique_ptr<GlobalFunctionData> GSheetCopyFunction::GSheetWriteInitializeGlobal(C
 	// Do this here in the initialization so that it only happens once
 	// OVERWRITE_RANGE takes precedence since it defaults to false and is less destructive
 	if (options.overwrite_range) {
-		delete_sheet_data(spreadsheet_id, token, encoded_sheet_name, sheet_range);
+		delete_sheet_data(context, spreadsheet_id, token, encoded_sheet_name, sheet_range);
 	} else if (options.overwrite_sheet) {
 		std::string empty_string = ""; // An empty string will clear the entire sheet
-		delete_sheet_data(spreadsheet_id, token, encoded_sheet_name, empty_string);
+		delete_sheet_data(context, spreadsheet_id, token, encoded_sheet_name, empty_string);
 	}
 
 	// Write out the headers to the file here in the Initialize so they are only written once
@@ -217,7 +217,7 @@ unique_ptr<GlobalFunctionData> GSheetCopyFunction::GSheetWriteInitializeGlobal(C
 	// If we are appending, header defaults to false
 	if (options.header) {
 		std::string response =
-		    call_sheets_api(spreadsheet_id, token, encoded_sheet_name, sheet_range, HttpMethod::POST, request_body);
+		    call_sheets_api(context, spreadsheet_id, token, encoded_sheet_name, sheet_range, HttpMethod::POST, request_body);
 
 		// Check for errors in the response
 		json response_json = parseJson(response);
@@ -249,7 +249,7 @@ void GSheetCopyFunction::GSheetWriteSink(ExecutionContext &context, FunctionData
 	if (!options.sheet.empty()) {
 		sheet_name = options.sheet;
 	} else {
-		sheet_name = get_sheet_name_from_id(gstate.spreadsheet_id, sheet_id, gstate.token);
+		sheet_name = get_sheet_name_from_id(context.client, gstate.spreadsheet_id, sheet_id, gstate.token);
 	}
 
 	if (!options.range.empty()) {
@@ -286,7 +286,7 @@ void GSheetCopyFunction::GSheetWriteSink(ExecutionContext &context, FunctionData
 	std::string request_body = sheet_data.dump();
 
 	// Make the API call to write data to the Google Sheet
-	std::string response = call_sheets_api(gstate.spreadsheet_id, gstate.token, encoded_sheet_name, sheet_range,
+	std::string response = call_sheets_api(context.client, gstate.spreadsheet_id, gstate.token, encoded_sheet_name, sheet_range,
 	                                       HttpMethod::POST, request_body);
 
 	// Check for errors in the response

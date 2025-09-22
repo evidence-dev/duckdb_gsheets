@@ -51,9 +51,9 @@ std::string extract_sheet_range(const std::string &input) {
 	return "";
 }
 
-std::string get_sheet_name_from_id(const std::string &spreadsheet_id, const std::string &sheet_id,
+std::string get_sheet_name_from_id(ClientContext &context, const std::string &spreadsheet_id, const std::string &sheet_id,
                                    const std::string &token) {
-	std::string metadata_response = get_spreadsheet_metadata(spreadsheet_id, token);
+	std::string metadata_response = get_spreadsheet_metadata(context, spreadsheet_id, token);
 	json metadata = parseJson(metadata_response);
 	for (const auto &sheet : metadata["sheets"]) {
 		if (sheet["properties"]["sheetId"].get<int>() == std::stoi(sheet_id)) {
@@ -63,9 +63,9 @@ std::string get_sheet_name_from_id(const std::string &spreadsheet_id, const std:
 	throw duckdb::InvalidInputException("Sheet with ID %s not found", sheet_id);
 }
 
-std::string get_sheet_name_from_index(const std::string &spreadsheet_id, const std::string &sheet_index,
+std::string get_sheet_name_from_index(ClientContext &context, const std::string &spreadsheet_id, const std::string &sheet_index,
                                       const std::string &token) {
-	std::string metadata_response = get_spreadsheet_metadata(spreadsheet_id, token);
+	std::string metadata_response = get_spreadsheet_metadata(context, spreadsheet_id, token);
 	json metadata = parseJson(metadata_response);
 	for (const auto &sheet : metadata["sheets"]) {
 		if (sheet["properties"]["index"].get<int>() == std::stoi(sheet_index)) {
@@ -75,9 +75,9 @@ std::string get_sheet_name_from_index(const std::string &spreadsheet_id, const s
 	throw duckdb::InvalidInputException("Sheet with index %s not found", sheet_index);
 }
 
-std::string get_sheet_id_from_name(const std::string &spreadsheet_id, const std::string &sheet_name,
+std::string get_sheet_id_from_name(ClientContext &context, const std::string &spreadsheet_id, const std::string &sheet_name,
                                    const std::string &token) {
-	std::string metadata_response = get_spreadsheet_metadata(spreadsheet_id, token);
+	std::string metadata_response = get_spreadsheet_metadata(context, spreadsheet_id, token);
 	json metadata = parseJson(metadata_response);
 	for (const auto &sheet : metadata["sheets"]) {
 		if (sheet["properties"]["title"].get<std::string>() == sheet_name) {

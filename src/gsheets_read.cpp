@@ -14,10 +14,10 @@ namespace duckdb {
 using json = nlohmann::json;
 
 ReadSheetBindData::ReadSheetBindData(string spreadsheet_id, string token, bool header, string sheet_name,
-                                     string sheet_range)
+                                     string sheet_range, ClientContext &context)
     : spreadsheet_id(spreadsheet_id), token(token), finished(false), row_index(0), header(header),
       sheet_name(sheet_name), sheet_range(sheet_range) {
-	response = call_sheets_api(spreadsheet_id, token, sheet_name, sheet_range, HttpMethod::GET);
+	response = call_sheets_api(context, spreadsheet_id, token, sheet_name, sheet_range, HttpMethod::GET);
 }
 
 bool IsValidNumber(const string &value) {
@@ -195,7 +195,7 @@ unique_ptr<FunctionData> ReadSheetBind(ClientContext &context, TableFunctionBind
 			}
 
 			// Validate that sheet with name exists for better error messaging
-			sheet_id = get_sheet_id_from_name(spreadsheet_id, sheet_name, token);
+			sheet_id = get_sheet_id_from_name(context, spreadsheet_id, sheet_name, token);
 		} else if (kv.first == "range") {
 			sheet_range = kv.second.GetValue<string>();
 		}
@@ -206,15 +206,15 @@ unique_ptr<FunctionData> ReadSheetBind(ClientContext &context, TableFunctionBind
 		sheet_id = extract_sheet_id(sheet_input);
 		if (sheet_id.empty()) {
 			// Fallback to first sheet by index
-			sheet_name = get_sheet_name_from_index(spreadsheet_id, "0", token);
+			sheet_name = get_sheet_name_from_index(context, spreadsheet_id, "0", token);
 		} else {
-			sheet_name = get_sheet_name_from_id(spreadsheet_id, sheet_id, token);
+			sheet_name = get_sheet_name_from_id(context, spreadsheet_id, sheet_id, token);
 		}
 	}
 
 	std::string encoded_sheet_name = url_encode(sheet_name);
 
-	auto bind_data = make_uniq<ReadSheetBindData>(spreadsheet_id, token, header, encoded_sheet_name, sheet_range);
+	auto bind_data = make_uniq<ReadSheetBindData>(spreadsheet_id, token, header, encoded_sheet_name, sheet_range, context);
 
 	json cleanJson = parseJson(bind_data->response);
 	SheetData sheet_data = getSheetData(cleanJson);

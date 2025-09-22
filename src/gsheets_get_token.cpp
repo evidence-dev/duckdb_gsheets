@@ -137,7 +137,7 @@ TokenDetails get_token(ClientContext &context, const KeyValueSecret *kv_secret) 
 
 				std::string body =
 				    "grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=" + std::string(jwt);
-				std::string response = perform_https_request("oauth2.googleapis.com", "/token", "", HttpMethod::POST,
+				std::string response = perform_https_request(context, "oauth2.googleapis.com", "/token", "", HttpMethod::POST,
 				                                             body, "application/x-www-form-urlencoded");
 				json response_json = parseJson(response);
 				std::string token = response_json["access_token"].get<std::string>();
