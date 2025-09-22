@@ -69,6 +69,8 @@ static void LoadInternal(ExtensionLoader &loader) {
 	CreateGsheetSecretFunctions::Register(loader);
 	auto &config = DBConfig::GetConfig(loader.GetDatabaseInstance());
 
+	config.AddExtensionOption("gsheets_endpoint", "Alternative endpoint for the sheets.googleapis.com API",
+	                          LogicalType::VARCHAR, Value("sheets.googleapis.com"));
 	config.replacement_scans.emplace_back(ReadSheetReplacement);
 }
 
