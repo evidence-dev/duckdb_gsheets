@@ -160,15 +160,28 @@ std::string InitiateOAuthFlow() {
 	std::cout << "Visit the below URL to authorize DuckDB GSheets" << '\n';
 	std::cout << auth_request_url << '\n';
 
-// Open the URL in the user's default browser
-#ifdef _WIN32
-	system(("start \"\" \"" + auth_request_url + "\"").c_str());
-#elif __APPLE__
-	system(("open \"" + auth_request_url + "\"").c_str());
-#elif __linux__
-	system(("xdg-open \"" + auth_request_url + "\"").c_str());
+	// Attempt to open the URL in the user's default browser
+	bool should_open_browser = true;
+
+#ifdef __linux__
+	// On Linux, check for headless environment to avoid xdg-open errors
+	const char *display = std::getenv("DISPLAY");
+	const char *wayland_display = std::getenv("WAYLAND_DISPLAY");
+	if (!display && !wayland_display) {
+		should_open_browser = false;
+	}
 #endif
 
+	if (should_open_browser) {
+#ifdef _WIN32
+		system(("start \"\" \"" + auth_request_url + "\"").c_str());
+#elif __APPLE__
+		system(("open \"" + auth_request_url + "\"").c_str());
+#elif __linux__
+		system(("xdg-open \"" + auth_request_url + "\"").c_str());
+#endif
+	}
+	// Open the URL in the user's default browser
 	std::cout << "After granting permission, enter the token: ";
 	std::string access_token;
 	std::cin >> access_token;
