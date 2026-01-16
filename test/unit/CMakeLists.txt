@@ -30,6 +30,9 @@ set(UNIT_TEST_SOURCES
     # Transport (needed for auth tests)
     ${EXT_ROOT}/src/sheets/transport/http_client.cpp
     ${EXT_ROOT}/src/sheets/transport/mock_http_client.cpp
+    # Range tests
+    sheets/test_range.cpp
+    ${EXT_ROOT}/src/sheets/range.cpp
 )
 
 add_executable(unit_tests ${UNIT_TEST_SOURCES})
