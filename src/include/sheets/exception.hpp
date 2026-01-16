@@ -39,5 +39,19 @@ public:
 	}
 };
 
+class SheetNotFoundException : public SheetsException {
+public:
+	explicit SheetNotFoundException(const std::string &identifier)
+	    : SheetsException("Sheet not found: " + identifier), identifier(identifier) {
+	}
+
+	const std::string &GetIdentifier() const {
+		return identifier;
+	}
+
+private:
+	std::string identifier;
+};
+
 } // namespace sheets
 } // namespace duckdb
