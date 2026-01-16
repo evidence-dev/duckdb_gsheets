@@ -26,6 +26,7 @@ set(EXTENSION_SOURCES
     src/sheets/auth/bearer_token_auth.cpp
     src/sheets/auth/oauth_auth.cpp
     src/sheets/auth/service_account_auth.cpp
+    src/sheets/resources/base.cpp
     src/sheets/transport/http_client.cpp
     src/sheets/transport/httplib_client.cpp
     src/sheets/transport/duckdb_http_client.cpp
