@@ -33,6 +33,10 @@ set(UNIT_TEST_SOURCES
     # Range tests
     sheets/test_range.cpp
     ${EXT_ROOT}/src/sheets/range.cpp
+    # Values resource tests
+    sheets/resources/test_values.cpp
+    ${EXT_ROOT}/src/sheets/resources/base.cpp
+    ${EXT_ROOT}/src/sheets/resources/values.cpp
 )
 
 add_executable(unit_tests ${UNIT_TEST_SOURCES})
