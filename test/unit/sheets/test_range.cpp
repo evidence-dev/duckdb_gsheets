@@ -70,6 +70,51 @@ TEST_CASE("A1Range validates escaped apostrophe in sheet name", "[range]") {
 }
 
 // =============================================================================
+// Absolute Reference Tests
+// =============================================================================
+
+TEST_CASE("A1Range validates absolute column reference", "[range]") {
+	REQUIRE(A1Range("$A1").IsValid());
+	REQUIRE(A1Range("$Z99").IsValid());
+	REQUIRE(A1Range("$AA100").IsValid());
+}
+
+TEST_CASE("A1Range validates absolute row reference", "[range]") {
+	REQUIRE(A1Range("A$1").IsValid());
+	REQUIRE(A1Range("Z$99").IsValid());
+	REQUIRE(A1Range("AA$100").IsValid());
+}
+
+TEST_CASE("A1Range validates fully absolute reference", "[range]") {
+	REQUIRE(A1Range("$A$1").IsValid());
+	REQUIRE(A1Range("$Z$99").IsValid());
+	REQUIRE(A1Range("$AA$100").IsValid());
+}
+
+TEST_CASE("A1Range validates absolute references in ranges", "[range]") {
+	REQUIRE(A1Range("$A$1:$B$2").IsValid());
+	REQUIRE(A1Range("$A1:B$2").IsValid());
+	REQUIRE(A1Range("A$1:$B2").IsValid());
+	REQUIRE(A1Range("$A:$B").IsValid());       // Absolute column range
+	REQUIRE(A1Range("$A$1:B2").IsValid());     // Mixed: first absolute, second relative
+}
+
+TEST_CASE("A1Range validates absolute references with sheet names", "[range]") {
+	REQUIRE(A1Range("Sheet1!$A$1").IsValid());
+	REQUIRE(A1Range("Sheet1!$A1:$B2").IsValid());
+	REQUIRE(A1Range("'My Sheet'!$A$1:$B$2").IsValid());
+}
+
+TEST_CASE("A1Range rejects invalid absolute reference syntax", "[range]") {
+	REQUIRE_FALSE(A1Range("$$A1").IsValid());    // Double dollar before column
+	REQUIRE_FALSE(A1Range("A$$1").IsValid());    // Double dollar before row
+	REQUIRE_FALSE(A1Range("$1").IsValid());      // Dollar with just row (no column)
+	REQUIRE_FALSE(A1Range("$").IsValid());       // Just dollar
+	REQUIRE_FALSE(A1Range("A1$").IsValid());     // Trailing dollar
+	REQUIRE_FALSE(A1Range("$:A").IsValid());     // Dollar before colon
+}
+
+// =============================================================================
 // Invalid A1 Notation Tests
 // =============================================================================
 
@@ -80,7 +125,6 @@ TEST_CASE("A1Range rejects empty string", "[range]") {
 TEST_CASE("A1Range rejects invalid characters", "[range]") {
 	REQUIRE_FALSE(A1Range("A1#B2").IsValid());
 	REQUIRE_FALSE(A1Range("A1@").IsValid());
-	REQUIRE_FALSE(A1Range("$A$1").IsValid());  // Absolute refs not supported in this impl
 	REQUIRE_FALSE(A1Range("A1 B2").IsValid()); // Space without quotes
 }
 

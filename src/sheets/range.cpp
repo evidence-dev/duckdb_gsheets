@@ -1,5 +1,4 @@
 #include "sheets/range.hpp"
-#include <cctype>
 
 namespace duckdb {
 namespace sheets {
@@ -10,7 +9,9 @@ bool A1Range::IsValid() {
 		SHEET_NAME_QUOTED,   // Inside single-quoted sheet name
 		SHEET_NAME_COMPLETE, // Quoted sheet name closed (saw closing ')
 		SHEET_SEPARATOR,     // Just saw '!', expecting cell reference
+		COL_ABS,             // Saw '$', expecting column letters
 		COL,                 // Parsing column letters
+		ROW_ABS,             // Saw '$' after column, expecting row digits
 		ROW,                 // Parsing row digits
 		RANGE_SEPARATOR,     // Just saw ':', expecting second cell reference
 		ERROR,               // Invalid syntax
@@ -22,8 +23,8 @@ bool A1Range::IsValid() {
 
 	State state = START;
 	const char *ptr = range.c_str();
-	bool seen_bang = false;   // Only one '!' allowed
-	bool seen_colon = false;  // Only one ':' allowed
+	bool seen_bang = false;  // Only one '!' allowed
+	bool seen_colon = false; // Only one ':' allowed
 
 	while (*ptr) {
 		char c = *ptr;
@@ -32,6 +33,8 @@ bool A1Range::IsValid() {
 		case START:
 			if (c == '\'') {
 				state = SHEET_NAME_QUOTED;
+			} else if (c == '$') {
+				state = COL_ABS;
 			} else if (std::isalpha(c)) {
 				state = COL;
 			} else if (std::isdigit(c)) {
@@ -45,7 +48,7 @@ bool A1Range::IsValid() {
 			if (c == '\'') {
 				// Check for escape sequence ''
 				if (*(ptr + 1) == '\'') {
-					ptr++;  // Skip the escaped quote
+					ptr++; // Skip the escaped quote
 				} else {
 					state = SHEET_NAME_COMPLETE;
 				}
@@ -63,7 +66,9 @@ bool A1Range::IsValid() {
 			break;
 
 		case SHEET_SEPARATOR:
-			if (std::isalpha(c)) {
+			if (c == '$') {
+				state = COL_ABS;
+			} else if (std::isalpha(c)) {
 				state = COL;
 			} else if (std::isdigit(c)) {
 				state = ROW;
@@ -72,9 +77,21 @@ bool A1Range::IsValid() {
 			}
 			break;
 
+		case COL_ABS:
+			if (std::isalpha(c)) {
+				state = COL;
+			} else {
+				// '$' must be followed by column letters
+				state = ERROR;
+			}
+			break;
+
 		case COL:
 			if (std::isalpha(c)) {
 				// Stay in COL
+			} else if (c == '$') {
+				// Row absolute marker (e.g., "A$1")
+				state = ROW_ABS;
 			} else if (std::isdigit(c)) {
 				state = ROW;
 			} else if (c == '!' && !seen_bang) {
@@ -85,6 +102,15 @@ bool A1Range::IsValid() {
 				seen_colon = true;
 				state = RANGE_SEPARATOR;
 			} else {
+				state = ERROR;
+			}
+			break;
+
+		case ROW_ABS:
+			if (std::isdigit(c)) {
+				state = ROW;
+			} else {
+				// '$' after column must be followed by row digits
 				state = ERROR;
 			}
 			break;
@@ -105,7 +131,9 @@ bool A1Range::IsValid() {
 			break;
 
 		case RANGE_SEPARATOR:
-			if (std::isalpha(c)) {
+			if (c == '$') {
+				state = COL_ABS;
+			} else if (std::isalpha(c)) {
 				state = COL;
 			} else if (std::isdigit(c)) {
 				state = ROW;
