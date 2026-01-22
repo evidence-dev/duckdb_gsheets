@@ -37,12 +37,6 @@ bool IsValidNumber(const string &value) {
 	}
 }
 
-bool IsValidA1Range(const std::string &range) {
-	// Matches things like A1, $A$1, A1:B2, $A1:$B2, etc.
-	static const std::regex pattern("^\\$?[A-Za-z]+\\$?[0-9]+(:\\$?[A-Za-z]+\\$?[0-9]+)?$");
-	return std::regex_match(range, pattern);
-}
-
 void ReadSheetFunction(ClientContext &context, TableFunctionInput &data_p, DataChunk &output) {
 	auto &bind_data = const_cast<ReadSheetBindData &>(data_p.bind_data->Cast<ReadSheetBindData>());
 
