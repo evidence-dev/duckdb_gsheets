@@ -1,19 +1,23 @@
 #define DUCKDB_EXTENSION_MAIN
 
-#include "duckdb.hpp"
+// Standard library
+#include <string>
+#include <string>
+#include <vector>
 
+// DuckDB
 #include "duckdb/parser/expression/constant_expression.hpp"
 #include "duckdb/parser/expression/function_expression.hpp"
 #include "duckdb/parser/tableref/table_function_ref.hpp"
-
-// Standard library
-#include <string>
 
 // GSheets extension
 #include "gsheets_extension.hpp"
 #include "gsheets_auth.hpp"
 #include "gsheets_copy.hpp"
 #include "gsheets_read.hpp"
+
+// Utils
+#include "utils/version.hpp"
 
 // OpenSSL linked through vcpkg
 #include <openssl/opensslv.h>
@@ -22,11 +26,6 @@
 #include <openssl/bio.h>
 
 namespace duckdb {
-
-#include <string>
-#include <vector>
-#include <sstream>
-#include <algorithm>
 
 unique_ptr<TableRef> ReadSheetReplacement(ClientContext &context, ReplacementScanInput &input,
                                           optional_ptr<ReplacementScanData> data) {
@@ -79,11 +78,7 @@ std::string GsheetsExtension::Name() {
 }
 
 std::string GsheetsExtension::Version() const {
-#ifdef EXT_VERSION_GSHEETS
-	return EXT_VERSION_GSHEETS;
-#else
-	return "";
-#endif
+	return duckdb::getVersion();
 }
 
 } // namespace duckdb

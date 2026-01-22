@@ -1,5 +1,7 @@
 #pragma once
 
+#include "utils/version.hpp"
+
 #include "sheets/auth/auth_provider.hpp"
 #include "sheets/resources/spreadsheet.hpp"
 #include "sheets/transport/http_client.hpp"
@@ -31,11 +33,8 @@ private:
 		h["Content-Type"] = "application/json";
 		h["Accept"] = "application/json";
 
-#ifdef EXT_VERSION_GSHEETS
-		h["User-Agent"] = "duckdb-gsheets/" EXT_VERSION_GSHEETS;
-#else
-		h["User-Agent"] = "duckdb-gsheets/dev";
-#endif
+		std::string version = getVersion();
+		h["User-Agent"] = "duckdb-gsheets/" + (version.empty() ? "dev" : version);
 
 		return h;
 	}
