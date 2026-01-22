@@ -34,7 +34,10 @@ set(EXTENSION_SOURCES
     src/sheets/transport/duckdb_http_client.cpp
     src/sheets/transport/mock_http_client.cpp
     src/sheets/util/encoding.cpp
-    src/sheets/range.cpp)
+    src/sheets/range.cpp
+    src/sheets/auth_factory.cpp
+    src/utils/secret.cpp
+    src/utils/version.cpp)
 
 build_static_extension(${TARGET_NAME} ${EXTENSION_SOURCES})
 build_loadable_extension(${TARGET_NAME} " " ${EXTENSION_SOURCES})
