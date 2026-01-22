@@ -42,6 +42,8 @@ set(UNIT_TEST_SOURCES
     ${EXT_ROOT}/src/sheets/resources/spreadsheet.cpp
     # Client tests
     sheets/test_client.cpp
+    # Utils (needed for client)
+    ${EXT_ROOT}/src/utils/version.cpp
 )
 
 add_executable(unit_tests ${UNIT_TEST_SOURCES})
