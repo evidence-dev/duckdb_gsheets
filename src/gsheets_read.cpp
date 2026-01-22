@@ -1,24 +1,15 @@
+#include <string>
+
+#include "duckdb/common/exception.hpp"
+
 #include "gsheets_read.hpp"
 #include "gsheets_utils.hpp"
-#include "duckdb/common/exception.hpp"
-#include "duckdb/main/secret/secret_manager.hpp"
-#include "gsheets_requests.hpp"
-#include <json.hpp>
-#include <string>
-#include <regex>
-#include "gsheets_get_token.hpp"
-#include <iostream>
+
+#include "sheets/client.hpp"
+#include "sheets/auth_factory.hpp"
+#include "sheets/transport/httplib_client.hpp"
 
 namespace duckdb {
-
-using json = nlohmann::json;
-
-ReadSheetBindData::ReadSheetBindData(string spreadsheet_id, string token, bool header, string sheet_name,
-                                     string sheet_range)
-    : spreadsheet_id(spreadsheet_id), token(token), finished(false), row_index(0), header(header),
-      sheet_name(sheet_name), sheet_range(sheet_range) {
-	response = call_sheets_api(spreadsheet_id, token, sheet_name, sheet_range, HttpMethod::GET);
-}
 
 bool IsValidNumber(const string &value) {
 	// Skip empty strings
@@ -38,14 +29,11 @@ bool IsValidNumber(const string &value) {
 }
 
 void ReadSheetFunction(ClientContext &context, TableFunctionInput &data_p, DataChunk &output) {
-	auto &bind_data = const_cast<ReadSheetBindData &>(data_p.bind_data->Cast<ReadSheetBindData>());
+	const auto &bind_data = data_p.bind_data->Cast<ReadSheetBindData>();
 
 	if (bind_data.finished) {
 		return;
 	}
-
-	json cleanJson = parseJson(bind_data.response);
-	SheetData sheet_data = getSheetData(cleanJson);
 
 	idx_t row_count = 0;
 	idx_t column_count = output.ColumnCount();
@@ -53,8 +41,8 @@ void ReadSheetFunction(ClientContext &context, TableFunctionInput &data_p, DataC
 	// Adjust starting index based on whether we're using the header
 	idx_t start_index = bind_data.header ? bind_data.row_index + 1 : bind_data.row_index;
 
-	for (idx_t i = start_index; i < sheet_data.values.size() && row_count < STANDARD_VECTOR_SIZE; i++) {
-		const auto &row = sheet_data.values[i];
+	for (idx_t i = start_index; i < bind_data.values.size() && row_count < STANDARD_VECTOR_SIZE; i++) {
+		const auto &row = bind_data.values[i];
 		for (idx_t col = 0; col < column_count; col++) {
 			if (col < row.size()) {
 				const string &value = row[col];
@@ -90,7 +78,7 @@ void ReadSheetFunction(ClientContext &context, TableFunctionInput &data_p, DataC
 	}
 
 	bind_data.row_index += row_count;
-	bind_data.finished = (bind_data.row_index >= (sheet_data.values.size() - (bind_data.header ? 1 : 0)));
+	bind_data.finished = (bind_data.row_index >= (bind_data.values.size() - (bind_data.header ? 1 : 0)));
 
 	output.SetCardinality(row_count);
 }
@@ -114,40 +102,13 @@ unique_ptr<FunctionData> ReadSheetBind(ClientContext &context, TableFunctionBind
 	// Try to extract the range from the input (URL or ID)
 	std::string sheet_range = extract_sheet_range(sheet_input);
 
-	// Use the SecretManager to get the token
-	auto &secret_manager = SecretManager::Get(context);
-	auto transaction = CatalogTransaction::GetSystemCatalogTransaction(context);
-	auto secret_match = secret_manager.LookupSecret(transaction, "gsheet", "gsheet");
-
-	if (!secret_match.HasMatch()) {
-		throw InvalidInputException("No 'gsheet' secret found. Please create a secret with 'CREATE SECRET' first.");
+	// Initialize client
+	sheets::HttpLibClient http;
+	auto auth = sheets::CreateAuthFromSecret(context, http);
+	if (!auth) {
+		throw InvalidInputException("No 'gsheet' secret found...");
 	}
-
-	auto &secret = secret_match.GetSecret();
-	if (secret.GetType() != "gsheet") {
-		throw InvalidInputException("Invalid secret type. Expected 'gsheet', got '%s'", secret.GetType());
-	}
-
-	const auto *kv_secret = dynamic_cast<const KeyValueSecret *>(&secret);
-	if (!kv_secret) {
-		throw InvalidInputException("Invalid secret format for 'gsheet' secret");
-	}
-
-	std::string token;
-
-	if (secret.GetProvider() == "key_file") {
-		// If using a private key, retrieve the private key from the secret, but convert it
-		// into a token before use. This is an extra request per 30 minutes.
-		// The secret is the JSON file that is extracted from Google as per the README
-		token = get_token_and_cache(context, transaction, kv_secret);
-	} else {
-		Value token_value;
-		if (!kv_secret->TryGetValue("token", token_value)) {
-			throw InvalidInputException("'token' not found in 'gsheet' secret");
-		}
-
-		token = token_value.ToString();
-	}
+	sheets::GoogleSheetsClient client(http, *auth);
 
 	// Parse named parameters
 	for (auto &kv : input.named_parameters) {
@@ -181,7 +142,7 @@ unique_ptr<FunctionData> ReadSheetBind(ClientContext &context, TableFunctionBind
 				}
 			} else {
 				// No quotes means any `!` char indicates A1 notation
-				size_t pos = sheet_name.find("!");
+				size_t pos = sheet_name.find('!');
 				if (pos != std::string::npos) {
 					sheet_range = sheet_name.substr(pos + 1);
 					sheet_name = sheet_name.substr(0, pos);
@@ -189,7 +150,8 @@ unique_ptr<FunctionData> ReadSheetBind(ClientContext &context, TableFunctionBind
 			}
 
 			// Validate that sheet with name exists for better error messaging
-			sheet_id = get_sheet_id_from_name(spreadsheet_id, sheet_name, token);
+			auto sheet = client.Spreadsheets(spreadsheet_id).GetSheetByName(sheet_name);
+			sheet_id = std::to_string(sheet.properties.sheetId);
 		} else if (kv.first == "range") {
 			sheet_range = kv.second.GetValue<string>();
 		}
@@ -200,36 +162,51 @@ unique_ptr<FunctionData> ReadSheetBind(ClientContext &context, TableFunctionBind
 		sheet_id = extract_sheet_id(sheet_input);
 		if (sheet_id.empty()) {
 			// Fallback to first sheet by index
-			sheet_name = get_sheet_name_from_index(spreadsheet_id, "0", token);
+			auto sheet = client.Spreadsheets(spreadsheet_id).GetSheetByIndex(0);
+			sheet_name = sheet.properties.title;
 		} else {
-			sheet_name = get_sheet_name_from_id(spreadsheet_id, sheet_id, token);
+			try {
+				int id = std::stoi(sheet_id);
+				auto sheet = client.Spreadsheets(spreadsheet_id).GetSheetById(id);
+				sheet_name = sheet.properties.title;
+			} catch (const std::invalid_argument &e) {
+				throw InvalidInputException("Cannot convert sheet ID " + sheet_id + " to integer:" + e.what());
+			} catch (const std::out_of_range &e) {
+				throw InvalidInputException("Cannot convert sheet ID " + sheet_id + " to integer:" + e.what());
+			}
 		}
 	}
 
+	// Build range and fetch values
 	std::string encoded_sheet_name = url_encode(sheet_name);
+	std::string range_str = encoded_sheet_name;
+	if (!sheet_range.empty()) {
+		range_str += "!" + sheet_range;
+	}
 
-	auto bind_data = make_uniq<ReadSheetBindData>(spreadsheet_id, token, header, encoded_sheet_name, sheet_range);
-
-	json cleanJson = parseJson(bind_data->response);
-	SheetData sheet_data = getSheetData(cleanJson);
+	sheets::A1Range range(range_str);
+	auto value_range = client.Spreadsheets(spreadsheet_id).Values().Get(range);
 
 	// Throw error ourselves to give user a better error message
-	if (sheet_data.values.empty()) {
-		throw duckdb::InvalidInputException("Range %s is empty", sheet_data.range);
+	if (value_range.values.empty()) {
+		throw duckdb::InvalidInputException("Range %s is empty", value_range.range);
 	}
+
+	auto bind_data = make_uniq<ReadSheetBindData>(header, std::move(value_range.values));
 
 	idx_t start_index = header ? 1 : 0;
 
 	// Use empty row for first row if results are header-only
 	const std::vector<string> empty_row = {};
-	const auto &first_data_row = start_index >= sheet_data.values.size() ? empty_row : sheet_data.values[start_index];
+	const auto &values = bind_data->values;
+	const auto &first_data_row = start_index >= values.size() ? empty_row : values[start_index];
 
 	// If we have a header, we want the width of the result to be the max of:
 	//      the width of the header row
 	//      or the width of the first row of data
-	int result_width = first_data_row.size();
+	size_t result_width = first_data_row.size();
 	if (header) {
-		int header_width = sheet_data.values[0].size();
+		size_t header_width = values[0].size();
 		if (header_width > result_width) {
 			result_width = header_width;
 		}
@@ -238,8 +215,8 @@ unique_ptr<FunctionData> ReadSheetBind(ClientContext &context, TableFunctionBind
 	for (size_t i = 0; i < result_width; i++) {
 		// Assign default column_name, but rename to header value if using a header and header cell exists
 		string column_name = "column" + std::to_string(i + 1);
-		if (header && (i < sheet_data.values[0].size())) {
-			column_name = sheet_data.values[0][i];
+		if (header && (i < values[0].size())) {
+			column_name = values[0][i];
 		}
 		names.push_back(column_name);
 
