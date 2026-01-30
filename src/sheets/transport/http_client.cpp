@@ -26,7 +26,7 @@ HttpResponse IHttpClient::Put(const std::string &url, const HttpHeaders &headers
 }
 
 HttpResponse IHttpClient::Delete(const std::string &url, const HttpHeaders &headers) {
-	return Execute(BuildRequest(HttpMethod::DELETE, url, headers));
+	return Execute(BuildRequest(HttpMethod::DEL, url, headers));
 }
 } // namespace sheets
 } // namespace duckdb

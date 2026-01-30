@@ -6,7 +6,7 @@
 namespace duckdb {
 namespace sheets {
 
-enum class HttpMethod { GET, POST, PUT, DELETE };
+enum class HttpMethod { GET, POST, PUT, DEL };
 
 using HttpHeaders = std::map<std::string, std::string>;
 

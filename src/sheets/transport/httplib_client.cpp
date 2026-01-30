@@ -57,7 +57,7 @@ HttpResponse HttpLibClient::Execute(const HttpRequest &request) {
 	case HttpMethod::PUT:
 		result = client.Put(path, headers, request.body, contentType);
 		break;
-	case HttpMethod::DELETE:
+	case HttpMethod::DEL:
 		result = client.Delete(path, headers);
 		break;
 	}
