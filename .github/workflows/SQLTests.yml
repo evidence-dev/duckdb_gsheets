@@ -1,0 +1,25 @@
+name: SQL Tests
+
+on:
+  workflow_call:
+    secrets:
+      GSHEETS_KEY_FILE_JSON:
+        required: true
+
+jobs:
+  sql-tests:
+    name: Run SQL tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y ninja-build libssl-dev
+
+      - name: Write key file
+        run: echo '${{ secrets.GSHEETS_KEY_FILE_JSON }}' > /tmp/gsheets_key_file.json
+
+      - name: Run SQL tests
+        run: ./scripts/test_sql.sh /tmp/gsheets_key_file.json

@@ -1,8 +1,7 @@
 name: Unit Tests
 
 on:
-  push:
-  pull_request:
+  workflow_call:
 
 concurrency:
   group: unit-tests-${{ github.ref }}

@@ -1,29 +1,29 @@
-import duckdb 
-from google.oauth2 import service_account
+"""Generate a Google OAuth2 access token from a service account key file.
+
+Usage:
+    python scripts/generate_google_token.py <path-to-keyfile.json>
+
+Prints the access token to stdout.
+"""
+
+import sys
+
 from google.auth.transport.requests import Request
+from google.oauth2 import service_account
+
+SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 
 
-duckdb_con = duckdb.connect(':memory:', config = {"allow_unsigned_extensions": "true"})
-duckdb_con.sql("install './build/release/extension/gsheets/gsheets.duckdb_extension'")
-duckdb_con.sql("load gsheets")
-
-def get_token_from_user_file(user_file_path):
-    SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
-
+def get_token(key_file_path: str) -> str:
     credentials = service_account.Credentials.from_service_account_file(
-        user_file_path,
-        scopes=SCOPES
-        )
-
-    request = Request()
-    credentials.refresh(request)
+        key_file_path, scopes=SCOPES
+    )
+    credentials.refresh(Request())
     return credentials.token
 
-def set_gsheet_secret(duckdb_con, user_file_path):
-    token = get_token_from_user_file(user_file_path)
-    duckdb_con.sql(f"create or replace secret gsheet_secret (TYPE gsheet, token '{token}')")
 
-user_file_path = "credentials.json"
-set_gsheet_secret(duckdb_con, user_file_path)
-
-print(duckdb_con.sql("select * from read_gsheet('url_to_query', sheet:='sheet_to_query');"))
+if __name__ == "__main__":
+    if len(sys.argv) != 2:
+        print(f"Usage: {sys.argv[0]} <key-file-path>", file=sys.stderr)
+        sys.exit(1)
+    print(get_token(sys.argv[1]))

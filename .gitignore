@@ -1,17 +1,33 @@
+# Build
 build
-.idea
 cmake-build-debug
-duckdb_unittest_tempdir/
-.DS_Store
-testext
-test/python/__pycache__/
-.Rhistory
-vcpkg_installed
-token.txt
-.env
-_site/
-credentials.json
 compile_commands.json
+
+# IDE
+.idea
 .cache/clangd/
 .helix/
+
+# OS
+.DS_Store
+
+# Python
+.venv
+test/python/__pycache__/
+
+# R
+.Rhistory
+
+# DuckDB
+duckdb_unittest_tempdir/
+testext
+vcpkg_installed
+
+# Docs
+_site/
+
+# Secrets
+.env
+token.txt
+credentials.json
 service-account-credentials.json
