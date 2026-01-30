@@ -16,6 +16,7 @@ public:
 	SpreadsheetMetadata Get();
 
 	SheetMetadata GetSheetById(int sheetId);
+	SheetMetadata GetSheetById(const std::string &sheetId);
 	SheetMetadata GetSheetByName(const std::string &name);
 	SheetMetadata GetSheetByIndex(int index);
 

@@ -23,6 +23,11 @@ SheetMetadata SpreadsheetResource::GetSheetById(int sheetId) {
 	throw SheetNotFoundException(std::to_string(sheetId));
 }
 
+SheetMetadata SpreadsheetResource::GetSheetById(const std::string &sheetId) {
+	int id = std::stoi(sheetId);
+	return GetSheetById(id);
+}
+
 SheetMetadata SpreadsheetResource::GetSheetByName(const std::string &name) {
 	auto meta = Get();
 	for (const auto &sheet : meta.sheets) {
