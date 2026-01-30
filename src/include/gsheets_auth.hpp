@@ -1,12 +1,8 @@
 #pragma once
 
-#include "duckdb.hpp"
-
-#include <string>
+#include "duckdb/main/extension/extension_loader.hpp"
 
 namespace duckdb {
-
-std::string read_token_from_file(const std::string &file_path);
 
 std::string InitiateOAuthFlow();
 

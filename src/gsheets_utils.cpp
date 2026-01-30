@@ -1,12 +1,11 @@
-#include "gsheets_utils.hpp"
-#include "gsheets_requests.hpp"
-#include "duckdb/common/exception.hpp"
+#include <random>
 #include <regex>
-#include <json.hpp>
-#include <iostream>
 #include <sstream>
 
-using json = nlohmann::json;
+#include "duckdb/common/exception.hpp"
+
+#include "gsheets_utils.hpp"
+
 namespace duckdb {
 
 std::string extract_spreadsheet_id(const std::string &input) {
@@ -49,88 +48,6 @@ std::string extract_sheet_range(const std::string &input) {
 		}
 	}
 	return "";
-}
-
-std::string get_sheet_name_from_id(const std::string &spreadsheet_id, const std::string &sheet_id,
-                                   const std::string &token) {
-	std::string metadata_response = get_spreadsheet_metadata(spreadsheet_id, token);
-	json metadata = parseJson(metadata_response);
-	for (const auto &sheet : metadata["sheets"]) {
-		if (sheet["properties"]["sheetId"].get<int>() == std::stoi(sheet_id)) {
-			return sheet["properties"]["title"].get<std::string>();
-		}
-	}
-	throw duckdb::InvalidInputException("Sheet with ID %s not found", sheet_id);
-}
-
-std::string get_sheet_name_from_index(const std::string &spreadsheet_id, const std::string &sheet_index,
-                                      const std::string &token) {
-	std::string metadata_response = get_spreadsheet_metadata(spreadsheet_id, token);
-	json metadata = parseJson(metadata_response);
-	for (const auto &sheet : metadata["sheets"]) {
-		if (sheet["properties"]["index"].get<int>() == std::stoi(sheet_index)) {
-			return sheet["properties"]["title"].get<std::string>();
-		}
-	}
-	throw duckdb::InvalidInputException("Sheet with index %s not found", sheet_index);
-}
-
-std::string get_sheet_id_from_name(const std::string &spreadsheet_id, const std::string &sheet_name,
-                                   const std::string &token) {
-	std::string metadata_response = get_spreadsheet_metadata(spreadsheet_id, token);
-	json metadata = parseJson(metadata_response);
-	for (const auto &sheet : metadata["sheets"]) {
-		if (sheet["properties"]["title"].get<std::string>() == sheet_name) {
-			return std::to_string(sheet["properties"]["sheetId"].get<int>());
-		}
-	}
-	throw duckdb::InvalidInputException("Sheet with name %s not found", sheet_name);
-}
-
-json parseJson(const std::string &json_str) {
-	try {
-		// Find the start of the JSON object
-		size_t start = json_str.find('{');
-		if (start == std::string::npos) {
-			throw std::runtime_error("No JSON object found in the response");
-		}
-
-		// Find the end of the JSON object
-		size_t end = json_str.rfind('}');
-		if (end == std::string::npos) {
-			throw std::runtime_error("No closing brace found in the JSON response");
-		}
-
-		// Extract the JSON object
-		std::string clean_json = json_str.substr(start, end - start + 1);
-
-		json j = json::parse(clean_json);
-		return j;
-	} catch (const json::exception &e) {
-		std::cerr << "JSON parsing error: " << e.what() << std::endl;
-		std::cerr << "Raw JSON string: " << json_str << std::endl;
-		throw;
-	}
-}
-
-SheetData getSheetData(const json &j) {
-	SheetData result;
-	if (j.contains("range") && j.contains("majorDimension")) {
-		result.range = j["range"].get<std::string>();
-		result.majorDimension = j["majorDimension"].get<std::string>();
-		// NOTE: no need to hard fail on empty sheet values. We can handle this more naturally further down the call
-		// chain.
-		//       Just default to empty 2D vec.
-		result.values = j.contains("values") ? j["values"].get<std::vector<std::vector<std::string>>>()
-		                                     : std::vector<std::vector<std::string>> {};
-	} else if (j.contains("error")) {
-		string message = j["error"]["message"].get<std::string>();
-		int code = j["error"]["code"].get<int>();
-		throw std::runtime_error("Google Sheets API error: " + std::to_string(code) + " - " + message);
-	} else {
-		throw duckdb::InvalidInputException("JSON does not contain expected fields.\nRaw JSON string: %s", j.dump());
-	}
-	return result;
 }
 
 std::string generate_random_string(size_t length) {
