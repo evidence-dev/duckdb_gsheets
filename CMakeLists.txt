@@ -19,10 +19,8 @@ set(EXTENSION_SOURCES
     src/gsheets_extension.cpp
     src/gsheets_auth.cpp
     src/gsheets_copy.cpp
-    src/gsheets_requests.cpp
     src/gsheets_read.cpp
     src/gsheets_utils.cpp
-    src/gsheets_get_token.cpp
     src/sheets/auth/bearer_token_auth.cpp
     src/sheets/auth/oauth_auth.cpp
     src/sheets/auth/service_account_auth.cpp
@@ -38,6 +36,9 @@ set(EXTENSION_SOURCES
     src/sheets/auth_factory.cpp
     src/utils/secret.cpp
     src/utils/version.cpp)
+
+# Warn on unused/dead code
+add_compile_options(-Wunused-function -Wunreachable-code)
 
 build_static_extension(${TARGET_NAME} ${EXTENSION_SOURCES})
 build_loadable_extension(${TARGET_NAME} " " ${EXTENSION_SOURCES})
