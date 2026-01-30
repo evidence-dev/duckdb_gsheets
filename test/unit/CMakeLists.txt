@@ -1,6 +1,11 @@
 cmake_minimum_required(VERSION 3.5)
 project(gsheets_unit_tests)
 
+# Unit tests cannot be built under Emscripten (OpenSSL lacks wasm threading support)
+if(EMSCRIPTEN)
+    return()
+endif()
+
 # Derive extension root from current location
 get_filename_component(EXT_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
 
