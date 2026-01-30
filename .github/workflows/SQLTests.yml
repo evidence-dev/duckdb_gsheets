@@ -4,24 +4,35 @@ on:
   workflow_call:
     secrets:
       GSHEETS_KEY_FILE_JSON:
-        required: true
+        required: false
 
 jobs:
   sql-tests:
     name: Run SQL tests
     runs-on: ubuntu-latest
     steps:
+      - name: Check for credentials
+        id: check-creds
+        env:
+          GSHEETS_KEY_FILE_JSON: ${{ secrets.GSHEETS_KEY_FILE_JSON }}
+        run: |
+          if [ -z "$GSHEETS_KEY_FILE_JSON" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::warning::GSHEETS_KEY_FILE_JSON secret not available — skipping SQL tests"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "$GSHEETS_KEY_FILE_JSON" > /tmp/gsheets_key_file.json
+          fi
+
       - uses: actions/checkout@v4
+        if: steps.check-creds.outputs.skip == 'false'
         with:
           submodules: recursive
 
       - name: Install dependencies
+        if: steps.check-creds.outputs.skip == 'false'
         run: sudo apt-get update && sudo apt-get install -y ninja-build libssl-dev
 
-      - name: Write key file
-        env:
-          GSHEETS_KEY_FILE_JSON: ${{ secrets.GSHEETS_KEY_FILE_JSON }}
-        run: python3 -c "import os; open('/tmp/gsheets_key_file.json', 'w').write(os.environ['GSHEETS_KEY_FILE_JSON'])"
-
       - name: Run SQL tests
+        if: steps.check-creds.outputs.skip == 'false'
         run: ./scripts/test_sql.sh /tmp/gsheets_key_file.json
