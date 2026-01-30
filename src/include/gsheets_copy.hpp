@@ -5,16 +5,21 @@
 
 #include "duckdb/function/copy_function.hpp"
 
+#include "sheets/transport/http_client.hpp"
+#include "sheets/auth/auth_provider.hpp"
+
 namespace duckdb {
 struct GSheetCopyGlobalState : public GlobalFunctionData {
-	explicit GSheetCopyGlobalState(ClientContext &context, const string &spreadsheet_id, const string &token,
+	explicit GSheetCopyGlobalState(ClientContext &context, std::unique_ptr<sheets::IHttpClient> http,
+	                               std::unique_ptr<sheets::IAuthProvider> auth, const string &spreadsheet_id,
 	                               const string &sheet_name)
-	    : spreadsheet_id(spreadsheet_id), token(token), sheet_name(sheet_name) {
+	    : http(std::move(http)), auth(std::move(auth)), spreadsheet_id(spreadsheet_id), sheet_name(sheet_name) {
 	}
 
 public:
+	std::unique_ptr<sheets::IHttpClient> http;
+	std::unique_ptr<sheets::IAuthProvider> auth;
 	string spreadsheet_id;
-	string token;
 	string sheet_name;
 };
 
@@ -39,9 +44,9 @@ struct GSheetWriteBindData : public TableFunctionData {
 		options.name_list = std::move(names);
 		options.sheet = std::move(sheet);
 		options.range = std::move(range);
-		options.overwrite_sheet = std::move(overwrite_sheet);
-		options.overwrite_range = std::move(overwrite_range);
-		options.header = std::move(header);
+		options.overwrite_sheet = overwrite_sheet;
+		options.overwrite_range = overwrite_range;
+		options.header = header;
 	}
 };
 
