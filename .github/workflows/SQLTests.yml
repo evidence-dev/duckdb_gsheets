@@ -21,7 +21,7 @@ jobs:
       - name: Write key file
         env:
           GSHEETS_KEY_FILE_JSON: ${{ secrets.GSHEETS_KEY_FILE_JSON }}
-        run: echo "$GSHEETS_KEY_FILE_JSON" > /tmp/gsheets_key_file.json
+        run: python3 -c "import os; open('/tmp/gsheets_key_file.json', 'w').write(os.environ['GSHEETS_KEY_FILE_JSON'])"
 
       - name: Run SQL tests
         run: ./scripts/test_sql.sh /tmp/gsheets_key_file.json
