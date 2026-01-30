@@ -19,7 +19,9 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y ninja-build libssl-dev
 
       - name: Write key file
-        run: echo '${{ secrets.GSHEETS_KEY_FILE_JSON }}' > /tmp/gsheets_key_file.json
+        env:
+          GSHEETS_KEY_FILE_JSON: ${{ secrets.GSHEETS_KEY_FILE_JSON }}
+        run: echo "$GSHEETS_KEY_FILE_JSON" > /tmp/gsheets_key_file.json
 
       - name: Run SQL tests
         run: ./scripts/test_sql.sh /tmp/gsheets_key_file.json
