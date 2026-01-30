@@ -1,0 +1,24 @@
+name: Unit Tests
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: unit-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit-tests:
+    name: Run unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y ninja-build libssl-dev
+
+      - name: Build and run unit tests
+        run: make test_unit
