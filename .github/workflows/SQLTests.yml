@@ -6,10 +6,26 @@ on:
       GSHEETS_KEY_FILE_JSON:
         required: false
 
+  # For fork PRs: runs with base repo secrets after environment approval
+  pull_request_target:
+
+  # Manual trigger: maintainers can run SQL tests for any ref
+  workflow_dispatch:
+    inputs:
+      pr_ref:
+        description: "PR branch or SHA to test (for fork PRs)"
+        required: false
+
+concurrency:
+  group: sql-tests-${{ github.event.pull_request.head.ref || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   sql-tests:
     name: Run SQL tests
     runs-on: ubuntu-latest
+    # Require approval for fork PRs via pull_request_target
+    environment: ${{ github.event_name == 'pull_request_target' && 'integration-tests' || '' }}
     steps:
       - name: Check for credentials
         id: check-creds
@@ -28,6 +44,7 @@ jobs:
         if: steps.check-creds.outputs.skip == 'false'
         with:
           submodules: recursive
+          ref: ${{ inputs.pr_ref || github.event.pull_request.head.sha || github.sha }}
 
       - name: Install dependencies
         if: steps.check-creds.outputs.skip == 'false'
