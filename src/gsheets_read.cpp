@@ -166,8 +166,7 @@ unique_ptr<FunctionData> ReadSheetBind(ClientContext &context, TableFunctionBind
 			sheet_name = sheet.properties.title;
 		} else {
 			try {
-				int id = std::stoi(sheet_id);
-				auto sheet = client.Spreadsheets(spreadsheet_id).GetSheetById(id);
+				auto sheet = client.Spreadsheets(spreadsheet_id).GetSheetById(sheet_id);
 				sheet_name = sheet.properties.title;
 			} catch (const std::invalid_argument &e) {
 				throw InvalidInputException("Cannot convert sheet ID " + sheet_id + " to integer:" + e.what());
