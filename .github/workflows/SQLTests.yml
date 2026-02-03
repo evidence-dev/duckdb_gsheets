@@ -46,6 +46,12 @@ jobs:
           submodules: recursive
           ref: ${{ inputs.pr_ref || github.event.pull_request.head.sha || github.sha }}
 
+      - name: Setup vcpkg
+        if: steps.check-creds.outputs.skip == 'false'
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: a1a1cbc975abf909a6c8985a6a2b8fe20bbd9bd6
+
       - name: Install dependencies
         if: steps.check-creds.outputs.skip == 'false'
         run: sudo apt-get update && sudo apt-get install -y ninja-build libssl-dev
@@ -53,3 +59,5 @@ jobs:
       - name: Run SQL tests
         if: steps.check-creds.outputs.skip == 'false'
         run: ./scripts/test_sql.sh /tmp/gsheets_key_file.json
+        env:
+          GEN: ninja
