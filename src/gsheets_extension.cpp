@@ -2,7 +2,6 @@
 
 // Standard library
 #include <string>
-#include <string>
 #include <vector>
 
 // DuckDB
