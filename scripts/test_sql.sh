@@ -31,7 +31,11 @@ TOKEN="$("$VENV_DIR/bin/python" "$SCRIPT_DIR/generate_google_token.py" "$KEY_FIL
 info "KEY_FILE_PATH=$KEY_FILE_PATH"
 info "TOKEN generated (${#TOKEN} chars)"
 
-# Run SQL tests
-info "Running SQL tests (make test)"
+# Build and run SQL tests
 cd "$PROJECT_DIR"
+if [ ! -f "./build/release/test/unittest" ]; then
+    info "Building extension (make release)"
+    make release
+fi
+info "Running SQL tests (make test)"
 make test
