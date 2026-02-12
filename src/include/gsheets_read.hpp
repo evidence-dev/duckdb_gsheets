@@ -8,18 +8,16 @@
 namespace duckdb {
 
 struct ReadSheetBindData : public TableFunctionData {
-	string spreadsheet_id;
-	string token;
-	bool finished;
-	idx_t row_index;
-	string response;
+	mutable bool finished;
+	mutable idx_t row_index;
 	bool header;
-	string sheet_name;
-	string sheet_range;
+	std::vector<std::vector<std::string>> values;
 	vector<LogicalType> return_types;
 	vector<string> names;
 
-	ReadSheetBindData(string spreadsheet_id, string token, bool header, string sheet_name, string sheet_range);
+	ReadSheetBindData(bool header, std::vector<std::vector<std::string>> values)
+	    : finished(false), row_index(0), header(header), values(std::move(values)) {
+	}
 };
 
 void ReadSheetFunction(ClientContext &context, TableFunctionInput &data_p, DataChunk &output);

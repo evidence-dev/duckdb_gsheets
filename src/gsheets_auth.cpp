@@ -1,26 +1,15 @@
-#include "duckdb.hpp"
-
-#include "gsheets_auth.hpp"
-#include "gsheets_utils.hpp"
-#include "gsheets_get_token.hpp"
-
 #include <fstream>
 #include <cstdlib>
 #include <json.hpp>
 
+#include "duckdb.hpp"
+
+#include "gsheets_auth.hpp"
+#include "gsheets_utils.hpp"
+
 using json = nlohmann::json;
 
 namespace duckdb {
-
-std::string read_token_from_file(const std::string &file_path) {
-	std::ifstream file(file_path);
-	if (!file.is_open()) {
-		throw duckdb::IOException("Unable to open token file: " + file_path);
-	}
-	std::string token;
-	std::getline(file, token);
-	return token;
-}
 
 // This code is copied, with minor modifications from
 // https://github.com/duckdb/duckdb_azure/blob/main/src/azure_secret.cpp
@@ -98,11 +87,6 @@ static unique_ptr<BaseSecret> CreateGsheetSecretFromKeyFile(ClientContext &conte
 	CopySecret("filepath", input, *result); // Store the filepath anyway
 
 	const auto result_const = *result;
-	TokenDetails token_details = get_token(context, &result_const);
-	std::string token = token_details.token;
-
-	(*result).secret_map["token"] = Value(token);
-	(*result).secret_map["token_expiration"] = Value(token_details.expiration_time);
 
 	// Redact sensible keys
 	RedactCommonKeys(*result);

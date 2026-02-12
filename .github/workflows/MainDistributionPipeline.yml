@@ -12,7 +12,19 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  unit-tests:
+    name: Unit Tests
+    uses: ./.github/workflows/UnitTests.yml
+
+  sql-tests:
+    name: SQL Tests
+    needs: unit-tests
+    uses: ./.github/workflows/SQLTests.yml
+    secrets:
+      GSHEETS_KEY_FILE_JSON: ${{ secrets.GSHEETS_KEY_FILE_JSON }}
+
   duckdb-next-build:
+    needs: sql-tests
     name: Build extension binaries
     uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@main
     with:
@@ -22,6 +34,7 @@ jobs:
       exclude_archs: "windows_amd64_rtools"
 
   duckdb-stable-build:
+    needs: sql-tests
     name: Build extension binaries
     uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@main
     with:
