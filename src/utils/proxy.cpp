@@ -15,13 +15,21 @@
 namespace duckdb {
 namespace sheets {
 
-static void ParseHTTPProxyHost(string &proxy_value, string &hostname_out, uint16_t &port_out, uint16_t default_port) {
+static void ParseHTTPProxyHost(string &proxy_value, string &hostname_out, uint16_t &port_out) {
+	uint16_t default_port = 80;
 	auto sanitized_proxy_value = proxy_value;
 	if (StringUtil::StartsWith(proxy_value, "http://")) {
 		sanitized_proxy_value = proxy_value.substr(7);
 	} else if (StringUtil::StartsWith(proxy_value, "https://")) {
+		default_port = 443;
 		sanitized_proxy_value = proxy_value.substr(8);
 	}
+
+	// Remove all trailing slashes to avoid issues with host path
+	while (!sanitized_proxy_value.empty() && StringUtil::EndsWith(sanitized_proxy_value, "/")) {
+		sanitized_proxy_value.pop_back();
+	}
+
 	auto proxy_split = StringUtil::Split(sanitized_proxy_value, ":");
 	if (proxy_split.size() == 1) {
 		hostname_out = proxy_split[0];
@@ -62,7 +70,7 @@ HttpProxyConfig GetHttpProxyConfig(ClientContext &ctx) {
 		auto proxy_value = http_proxy.ToString();
 
 		if (!proxy_value.empty()) {
-			ParseHTTPProxyHost(proxy_value, proxy_config.host, proxy_config.port, 80);
+			ParseHTTPProxyHost(proxy_value, proxy_config.host, proxy_config.port);
 			proxy_config.username = http_proxy_username.ToString();
 			proxy_config.password = http_proxy_password.ToString();
 		}
@@ -73,7 +81,7 @@ HttpProxyConfig GetHttpProxyConfig(ClientContext &ctx) {
 		auto proxy_value = global_config.options.http_proxy;
 
 		if (!proxy_value.empty()) {
-			ParseHTTPProxyHost(proxy_value, proxy_config.host, proxy_config.port, 80);
+			ParseHTTPProxyHost(proxy_value, proxy_config.host, proxy_config.port);
 			proxy_config.username = global_config.options.http_proxy_username;
 			proxy_config.password = global_config.options.http_proxy_password;
 		}
