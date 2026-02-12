@@ -8,8 +8,7 @@
 namespace duckdb {
 namespace sheets {
 
-std::unique_ptr<IAuthProvider> CreateAuthFromSecret(ClientContext &ctx, IHttpClient &http,
-                                                    const std::string &secretName = "");
+std::unique_ptr<IAuthProvider> CreateAuthFromSecret(ClientContext &ctx, IHttpClient &http);
 
 } // namespace sheets
 } // namespace duckdb
