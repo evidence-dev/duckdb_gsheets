@@ -7,7 +7,7 @@
 
 #include "sheets/client.hpp"
 #include "sheets/auth_factory.hpp"
-#include "sheets/transport/httplib_client.hpp"
+#include "sheets/transport/client_factory.hpp"
 
 namespace duckdb {
 
@@ -103,12 +103,12 @@ unique_ptr<FunctionData> ReadSheetBind(ClientContext &context, TableFunctionBind
 	std::string sheet_range = extract_sheet_range(sheet_input);
 
 	// Initialize client
-	sheets::HttpLibClient http;
-	auto auth = sheets::CreateAuthFromSecret(context, http);
+	auto http = sheets::CreateHttpClient(context);
+	auto auth = sheets::CreateAuthFromSecret(context, *http);
 	if (!auth) {
 		throw InvalidInputException("No 'gsheet' secret found...");
 	}
-	sheets::GoogleSheetsClient client(http, *auth);
+	sheets::GoogleSheetsClient client(*http, *auth);
 
 	// Parse named parameters
 	for (auto &kv : input.named_parameters) {

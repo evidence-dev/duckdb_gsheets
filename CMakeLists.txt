@@ -31,10 +31,12 @@ set(EXTENSION_SOURCES
     src/sheets/transport/httplib_client.cpp
     src/sheets/transport/duckdb_http_client.cpp
     src/sheets/transport/mock_http_client.cpp
+    src/sheets/transport/client_factory.cpp
     src/sheets/util/encoding.cpp
     src/sheets/range.cpp
     src/sheets/auth_factory.cpp
     src/utils/secret.cpp
+    src/utils/proxy.cpp
     src/utils/version.cpp)
 
 # Warn on unused/dead code (GCC/Clang only; MSVC uses different flag syntax)

@@ -10,7 +10,7 @@
 #include "sheets/auth_factory.hpp"
 #include "sheets/client.hpp"
 #include "sheets/range.hpp"
-#include "sheets/transport/httplib_client.hpp"
+#include "sheets/transport/client_factory.hpp"
 #include "sheets/types.hpp"
 
 namespace duckdb {
@@ -139,7 +139,7 @@ unique_ptr<GlobalFunctionData> GSheetCopyFunction::GSheetWriteInitializeGlobal(C
 	std::string sheet_range;
 
 	// Initialize client
-	auto http = make_uniq<sheets::HttpLibClient>();
+	auto http = sheets::CreateHttpClient(context);
 	auto auth = sheets::CreateAuthFromSecret(context, *http);
 	if (!auth) {
 		throw InvalidInputException("No 'gsheet' secret found...");
