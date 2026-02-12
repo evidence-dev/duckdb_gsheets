@@ -5,10 +5,9 @@
 
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/string_util.hpp"
+#include "duckdb/main/secret/secret.hpp"
 
 #include "utils/proxy.hpp"
-#include "duckdb/main/config.hpp"
-#include "duckdb/main/secret/secret.hpp"
 #include "utils/secret.hpp"
 #include "sheets/transport/http_type.hpp"
 
@@ -63,27 +62,33 @@ HttpProxyConfig GetHttpProxyConfig(ClientContext &ctx) {
 
 		Value http_proxy, http_proxy_username, http_proxy_password;
 
-		http_secret->TryGetValue("http_proxy", http_proxy);
-		http_secret->TryGetValue("http_proxy_username", http_proxy_username);
-		http_secret->TryGetValue("http_proxy_password", http_proxy_password);
+		if (http_secret->TryGetValue("http_proxy", http_proxy)) {
+			auto proxy_value = http_proxy.ToString();
+			if (!proxy_value.empty()) {
+				ParseHTTPProxyHost(proxy_value, proxy_config.host, proxy_config.port);
+
+				if (http_secret->TryGetValue("http_proxy_username", http_proxy_username)) {
+					proxy_config.username = http_proxy_username.ToString();
+				}
+
+				if (http_secret->TryGetValue("http_proxy_password", http_proxy_password)) {
+					proxy_config.password = http_proxy_password.ToString();
+				}
+			}
+		}
+	} else {
+		// try falling back on configs
+		Value http_proxy, http_proxy_username, http_proxy_password;
+		ctx.TryGetCurrentSetting("http_proxy", http_proxy);
 
 		auto proxy_value = http_proxy.ToString();
 
 		if (!proxy_value.empty()) {
 			ParseHTTPProxyHost(proxy_value, proxy_config.host, proxy_config.port);
+			ctx.TryGetCurrentSetting("http_proxy_username", http_proxy_username);
+			ctx.TryGetCurrentSetting("http_proxy_password", http_proxy_password);
 			proxy_config.username = http_proxy_username.ToString();
 			proxy_config.password = http_proxy_password.ToString();
-		}
-	} else {
-		// try falling back on configs
-		auto &global_config = DBConfig::GetConfig(ctx);
-
-		auto proxy_value = global_config.options.http_proxy;
-
-		if (!proxy_value.empty()) {
-			ParseHTTPProxyHost(proxy_value, proxy_config.host, proxy_config.port);
-			proxy_config.username = global_config.options.http_proxy_username;
-			proxy_config.password = global_config.options.http_proxy_password;
 		}
 	}
 	return proxy_config;
