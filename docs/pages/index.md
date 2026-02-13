@@ -9,9 +9,8 @@ hide_title: true
 <Alert status="warning">
 
 **🚧 Experimental 🚧** Here be dragons
- 
-</Alert>
 
+</Alert>
 
 A DuckDB extension for reading and writing Google Sheets with SQL.
 
@@ -26,7 +25,7 @@ LOAD gsheets;
 
 The latest version of [DuckDB](https://duckdb.org/docs/installation) (currently 1.4.0) is supported.
 
-## Usage 
+## Usage
 
 ### Authenticate
 
@@ -37,20 +36,43 @@ CREATE SECRET (TYPE gsheet);
 
 -- OR create a secret with your Google API access token (boring, see below guide)
 CREATE SECRET (
-    TYPE gsheet, 
-    PROVIDER access_token, 
+    TYPE gsheet,
+    PROVIDER access_token,
     TOKEN '<your_token>'
 );
 
 
--- OR create a non-expiring JSON secret with your Google API private key 
+-- OR create a non-expiring JSON secret with your Google API private key
 -- (This enables use in non-interactive workflows like data pipelines)
 -- (see "Getting a Google API Access Private Key" below)
 CREATE SECRET (
-    TYPE gsheet, 
-    PROVIDER key_file, 
+    TYPE gsheet,
+    PROVIDER key_file,
     FILEPATH '<path_to_JSON_file_with_private_key>'
 );
+```
+
+### HTTP Proxy
+
+See [HTTP Proxy documentation](https://duckdb.org/docs/stable/core_extensions/httpfs/https#http-proxy).
+
+You can add an HTTP proxy using the Secrets Manager:
+
+```sql
+CREATE SECRET http_proxy (
+    TYPE http,
+    HTTP_PROXY 'http_proxy_url',
+    HTTP_PROXY_USERNAME 'username',
+    HTTP_PROXY_PASSWORD 'password'
+);
+```
+
+Alternatively, you can add it via configuration options:
+
+```sql
+SET http_proxy = 'http_proxy_url';
+SET http_proxy_username = 'username';
+SET http_proxy_password = 'password';
 ```
 
 ### Read
@@ -102,40 +124,40 @@ copy <table_name> to 'https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-
 
 -- Write a spreadsheet to a specific sheet with the sheet parameter
 -- NOTE: A sheet parameter will take precedence over the query string
-copy <table_name> 
-to 'https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8/edit' 
+copy <table_name>
+to 'https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8/edit'
 (format gsheet, sheet 'Woot');
 
 -- Write a spreadsheet to a specific range with the range parameter
 -- NOTE: A range parameter will take precedence over the query string
-copy <table_name> 
-to 'https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8/edit' 
+copy <table_name>
+to 'https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8/edit'
 (format gsheet, sheet 'Woot', range 'B2:C10000');
 
 -- Only overwrite the range that is being written to
-copy <table_name> 
-to 'https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8/edit' 
+copy <table_name>
+to 'https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8/edit'
 (format gsheet, sheet 'Woot', range 'B2:C10000', overwrite_range TRUE);
 
 -- Overwrite the entire sheet (this is the default)
-copy <table_name> 
-to 'https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8/edit' 
+copy <table_name>
+to 'https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8/edit'
 (format gsheet, sheet 'Woot', range 'B2:C10000', overwrite_sheet TRUE);
 
 -- Append below existing data
 -- (by default, no header will be included)
-copy <table_name> 
-to 'https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8/edit' 
+copy <table_name>
+to 'https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8/edit'
 (format gsheet, sheet 'Woot', range 'B2:C10000', overwrite_sheet FALSE, overwrite_range FALSE);
 
 -- Append below existing data, but force the output of a header
-copy <table_name> 
-to 'https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8/edit' 
+copy <table_name>
+to 'https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8/edit'
 (format gsheet, sheet 'Woot', range 'B2:C10000', overwrite_sheet FALSE, overwrite_range FALSE, header TRUE);
 
 -- Write with no header
-copy <table_name> 
-to 'https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8/edit' 
+copy <table_name>
+to 'https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8/edit'
 (format gsheet, header FALSE);
 ```
 
@@ -178,7 +200,7 @@ The contents of the JSON file will be stored in the secret, as will the temporar
 
 Follow steps 13 and 14.
 
-This private key by default will not expire. Use caution with it. 
+This private key by default will not expire. Use caution with it.
 
 This will also require an additional API request approximately every 30 minutes.
 
@@ -188,6 +210,6 @@ This will also require an additional API request approximately every 30 minutes.
 - Google Sheets has a limit of 10,000,000 cells per spreadsheet.
 - Sheets must already exist to COPY TO them.
 
-## Support 
+## Support
 
 If you are having problems, find a bug, or have an idea for an improvement, please [file an issue on GitHub](https://github.com/evidence-dev/duckdb_gsheets).

@@ -31,3 +31,9 @@ _site/
 token.txt
 credentials.json
 service-account-credentials.json
+
+# Local Temp Files
+tmp/
+
+# Proxy Configs
+tinyproxy.conf

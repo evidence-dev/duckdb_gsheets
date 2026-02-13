@@ -32,6 +32,12 @@ HttpResponse HttpLibClient::Execute(const HttpRequest &request) {
 	ParseUrl(request.url, baseUrl, path);
 
 	duckdb_httplib_openssl::Client client(baseUrl);
+	if (!proxy_config.host.empty()) {
+		client.set_proxy(proxy_config.host, proxy_config.port);
+		if (!proxy_config.username.empty()) {
+			client.set_proxy_basic_auth(proxy_config.username, proxy_config.password);
+		}
+	}
 
 	// Extract content-type from request headers (default to application/json)
 	std::string contentType = "application/json";

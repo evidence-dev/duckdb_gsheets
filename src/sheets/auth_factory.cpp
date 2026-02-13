@@ -7,9 +7,8 @@
 namespace duckdb {
 namespace sheets {
 
-std::unique_ptr<IAuthProvider> CreateAuthFromSecret(ClientContext &ctx, IHttpClient &http,
-                                                    const std::string &secretName) {
-	auto *secret = GetGSheetSecret(ctx, secretName);
+std::unique_ptr<IAuthProvider> CreateAuthFromSecret(ClientContext &ctx, IHttpClient &http) {
+	auto *secret = GetGSheetSecret(ctx);
 	if (!secret) {
 		return nullptr;
 	}

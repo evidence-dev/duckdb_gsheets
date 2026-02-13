@@ -1,15 +1,20 @@
 #include "utils/secret.hpp"
 
+#include "duckdb/main/secret/secret.hpp"
 #include "duckdb/main/secret/secret_manager.hpp"
 #include "duckdb/catalog/catalog_transaction.hpp"
 
 namespace duckdb {
 namespace sheets {
 
-const KeyValueSecret *GetGSheetSecret(ClientContext &ctx, const std::string &secretName) {
+const SecretMatch GetSecretMatch(ClientContext &ctx, const std::string &path, const std::string &type) {
 	auto &manager = SecretManager::Get(ctx);
 	auto transaction = CatalogTransaction::GetSystemCatalogTransaction(ctx);
-	auto match = manager.LookupSecret(transaction, "gsheet", "gsheet");
+	return manager.LookupSecret(transaction, path, type);
+}
+
+const KeyValueSecret *GetGSheetSecret(ClientContext &ctx) {
+	auto match = GetSecretMatch(ctx, "gsheet", "gsheet");
 	if (!match.HasMatch()) {
 		return nullptr;
 	}

@@ -6,9 +6,6 @@ on:
       GSHEETS_KEY_FILE_JSON:
         required: false
 
-  # For fork PRs: runs with base repo secrets after environment approval
-  pull_request_target:
-
   # Manual trigger: maintainers can run SQL tests for any ref
   workflow_dispatch:
     inputs:
