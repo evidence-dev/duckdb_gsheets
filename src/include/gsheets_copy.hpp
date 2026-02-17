@@ -29,6 +29,7 @@ struct GSheetWriteOptions {
 	std::string range;
 	bool overwrite_sheet;
 	bool overwrite_range;
+	bool create_if_not_exists;
 	bool header;
 };
 
@@ -38,7 +39,8 @@ struct GSheetWriteBindData : public TableFunctionData {
 	vector<LogicalType> sql_types;
 
 	GSheetWriteBindData(string file_path, vector<LogicalType> sql_types, vector<string> names, std::string sheet,
-	                    std::string range, bool overwrite_sheet, bool overwrite_range, bool header)
+	                    std::string range, bool overwrite_sheet, bool overwrite_range, bool create_if_not_exists,
+	                    bool header)
 	    : sql_types(std::move(sql_types)) {
 		files.push_back(std::move(file_path));
 		options.name_list = std::move(names);
@@ -46,6 +48,7 @@ struct GSheetWriteBindData : public TableFunctionData {
 		options.range = std::move(range);
 		options.overwrite_sheet = overwrite_sheet;
 		options.overwrite_range = overwrite_range;
+		options.create_if_not_exists = create_if_not_exists;
 		options.header = header;
 	}
 };

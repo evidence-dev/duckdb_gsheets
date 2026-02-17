@@ -48,6 +48,42 @@ struct SpreadsheetMetadata {
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(SpreadsheetMetadata, spreadsheetId, properties, sheets)
 
+struct AddSheetRequestProperties {
+	std::string title = "";
+};
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(AddSheetRequestProperties, title)
+
+struct AddSheetRequest {
+	AddSheetRequestProperties properties = {};
+};
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(AddSheetRequest, properties)
+
+struct SpreadsheetUpdateRequest {
+	AddSheetRequest addSheet = {};
+};
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(SpreadsheetUpdateRequest, addSheet);
+
+struct SpreadsheetUpdateResponse {
+	SheetMetadata addSheet = {};
+};
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(SpreadsheetUpdateResponse, addSheet);
+
+struct SpreadsheetBatchUpdateRequest {
+	std::vector<SpreadsheetUpdateRequest> requests = {};
+};
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(SpreadsheetBatchUpdateRequest, requests);
+
+struct SpreadsheetBatchUpdateResponse {
+	std::vector<SpreadsheetUpdateResponse> replies = {};
+};
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(SpreadsheetBatchUpdateResponse, replies);
+
 enum MajorDimension { DIMENSION_UNSPECIFIED, ROWS, COLUMNS };
 
 NLOHMANN_JSON_SERIALIZE_ENUM(MajorDimension, {

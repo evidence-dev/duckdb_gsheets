@@ -1,6 +1,7 @@
 #include <vector>
 
 #include "duckdb/common/exception.hpp"
+#include "duckdb/common/exception/binder_exception.hpp"
 #include "duckdb/common/file_system.hpp"
 #include "duckdb/common/types/value.hpp"
 
@@ -9,6 +10,7 @@
 
 #include "sheets/auth_factory.hpp"
 #include "sheets/client.hpp"
+#include "sheets/exception.hpp"
 #include "sheets/range.hpp"
 #include "sheets/transport/client_factory.hpp"
 #include "sheets/types.hpp"
@@ -25,8 +27,9 @@ GSheetCopyFunction::GSheetCopyFunction() : CopyFunction("gsheet") {
 unique_ptr<FunctionData> GSheetCopyFunction::GSheetWriteBind(ClientContext &context, CopyFunctionBindInput &input,
                                                              const vector<string> &names,
                                                              const vector<LogicalType> &sql_types) {
-	string file_path = input.info.file_path;
 
+	// TODO(mh): refactor option resolution
+	string file_path = input.info.file_path;
 	auto options = input.info.options;
 
 	const auto sheet_opt = options.find("sheet");
@@ -124,8 +127,32 @@ unique_ptr<FunctionData> GSheetCopyFunction::GSheetWriteBind(ClientContext &cont
 		}
 	}
 
+	const auto create_if_not_exists_opt = options.find("create_if_not_exists");
+	bool create_if_not_exists;
+
+	if (create_if_not_exists_opt != options.end()) {
+		if (create_if_not_exists_opt->second.size() != 1) {
+			throw BinderException("create_if_not_exists option must be a single boolean value");
+		}
+		string error_msg;
+		Value create_if_not_exists_val;
+		if (!create_if_not_exists_opt->second.back().DefaultTryCastAs(LogicalType::BOOLEAN, create_if_not_exists_val,
+		                                                              &error_msg)) {
+			throw BinderException("Failed to cast option to bool: ", error_msg);
+		}
+		if (create_if_not_exists_val.IsNull()) {
+			throw BinderException("Option must not be null");
+		}
+		create_if_not_exists = BooleanValue::Get(create_if_not_exists_val);
+		if (create_if_not_exists && sheet.empty()) {
+			throw BinderException("Must provide sheet name");
+		}
+	} else {
+		create_if_not_exists = false;
+	}
+
 	return make_uniq<GSheetWriteBindData>(file_path, sql_types, names, sheet, range, overwrite_sheet, overwrite_range,
-	                                      header);
+	                                      create_if_not_exists, header);
 }
 
 unique_ptr<GlobalFunctionData> GSheetCopyFunction::GSheetWriteInitializeGlobal(ClientContext &context,
@@ -152,6 +179,16 @@ unique_ptr<GlobalFunctionData> GSheetCopyFunction::GSheetWriteInitializeGlobal(C
 	} else {
 		auto sheet = client.Spreadsheets(spreadsheet_id).GetSheetById(sheet_id);
 		sheet_name = sheet.properties.title;
+	}
+
+	// Create sheet if not exist (if enabled)
+	if (options.create_if_not_exists) {
+		try {
+			auto sheet = client.Spreadsheets(spreadsheet_id).GetSheetByName(sheet_name);
+			// sheet already exists so we need to ignore this instruction from the user
+		} catch (sheets::SheetNotFoundException &_) {
+			client.Spreadsheets(spreadsheet_id).CreateSheet(sheet_name);
+		}
 	}
 
 	if (!options.range.empty()) {
