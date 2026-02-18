@@ -1,0 +1,12 @@
+If:
+  PathMatch: src/.*
+
+CompileFlags:
+  CompilationDatabase: build/release
+
+---
+If:
+  PathMatch: test/.*
+
+CompileFlags:
+  CompilationDatabase: build/unit_tests

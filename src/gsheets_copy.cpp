@@ -1,7 +1,10 @@
-#include <vector>
+#include <utility>
 
+#include "duckdb/common/case_insensitive_map.hpp"
 #include "duckdb/common/exception.hpp"
+#include "duckdb/common/exception/binder_exception.hpp"
 #include "duckdb/common/file_system.hpp"
+#include "duckdb/common/types.hpp"
 #include "duckdb/common/types/value.hpp"
 
 #include "gsheets_copy.hpp"
@@ -9,6 +12,7 @@
 
 #include "sheets/auth_factory.hpp"
 #include "sheets/client.hpp"
+#include "sheets/exception.hpp"
 #include "sheets/range.hpp"
 #include "sheets/transport/client_factory.hpp"
 #include "sheets/types.hpp"
@@ -22,110 +26,66 @@ GSheetCopyFunction::GSheetCopyFunction() : CopyFunction("gsheet") {
 	copy_to_sink = GSheetWriteSink;
 }
 
+static std::string GetStringOption(const case_insensitive_map_t<vector<Value>> &options, const std::string &name,
+                                   const std::string &default_value = "") {
+	const auto it = options.find(name);
+	if (it == options.end()) {
+		return default_value;
+	}
+	std::string err;
+	Value val;
+	if (!it->second.back().DefaultTryCastAs(LogicalType::VARCHAR, val, &err)) {
+		throw BinderException(name + " option must be VARCHAR");
+	}
+	if (val.IsNull()) {
+		throw BinderException(name + " option must not be NULL");
+	}
+	return StringValue::Get(val);
+}
+
+// NOTE: the second value in pair is a flag indicating if the value was set by the user
+static std::pair<bool, bool> GetBoolOption(const case_insensitive_map_t<vector<Value>> &options,
+                                           const std::string &name, bool default_value = false) {
+	const auto it = options.find(name);
+	if (it == options.end()) {
+		return std::make_pair(default_value, false);
+	}
+	if (it->second.size() != 1) {
+		throw BinderException(name + " option must be a single boolean value");
+	}
+	std::string err;
+	Value val;
+	if (!it->second.back().DefaultTryCastAs(LogicalType::BOOLEAN, val, &err)) {
+		throw BinderException(name + " option must be a single boolean value");
+	}
+	if (val.IsNull()) {
+		throw BinderException(name + " option must be a single boolean value");
+	}
+	return std::make_pair(BooleanValue::Get(val), true);
+}
+
 unique_ptr<FunctionData> GSheetCopyFunction::GSheetWriteBind(ClientContext &context, CopyFunctionBindInput &input,
                                                              const vector<string> &names,
                                                              const vector<LogicalType> &sql_types) {
-	string file_path = input.info.file_path;
 
+	string file_path = input.info.file_path;
 	auto options = input.info.options;
 
-	const auto sheet_opt = options.find("sheet");
-	std::string sheet;
-	if (sheet_opt != options.end()) {
-		string error_msg;
-		Value sheet_val;
-		if (!sheet_opt->second.back().DefaultTryCastAs(LogicalType::VARCHAR, sheet_val, &error_msg)) {
-			throw BinderException("sheet option must be a VARCHAR");
-		}
-		if (sheet_val.IsNull()) {
-			throw BinderException("sheet option must be a non-null VARCHAR");
-		}
-		sheet = StringValue::Get(sheet_val);
-	} else {
-		sheet = "";
-	}
+	auto sheet = GetStringOption(options, "sheet");
+	auto range = GetStringOption(options, "range");
+	bool overwrite_sheet = GetBoolOption(options, "overwrite_sheet", true).first;
+	bool overwrite_range = GetBoolOption(options, "overwrite_range", false).first;
+	bool create_if_not_exists = GetBoolOption(options, "create_if_not_exists", false).first;
 
-	const auto range_opt = options.find("range");
-	std::string range;
-	if (range_opt != options.end()) {
-		string error_msg;
-		Value range_val;
-		if (!range_opt->second.back().DefaultTryCastAs(LogicalType::VARCHAR, range_val, &error_msg)) {
-			throw BinderException("range option must be a VARCHAR");
-		}
-		if (range_val.IsNull()) {
-			throw BinderException("range option must be a non-null VARCHAR");
-		}
-		range = StringValue::Get(range_val);
-	} else {
-		range = "";
-	}
+	auto header_result = GetBoolOption(options, "header", true);
+	bool header = header_result.second ? header_result.first : (overwrite_range || overwrite_sheet);
 
-	const auto overwrite_sheet_opt = options.find("overwrite_sheet");
-	bool overwrite_sheet;
-	if (overwrite_sheet_opt != options.end()) {
-		if (overwrite_sheet_opt->second.size() != 1) {
-			throw BinderException("overwrite_sheet option must be a single boolean value");
-		}
-		string error_msg;
-		Value overwrite_sheet_bool_val;
-		if (!overwrite_sheet_opt->second.back().DefaultTryCastAs(LogicalType::BOOLEAN, overwrite_sheet_bool_val,
-		                                                         &error_msg)) {
-			throw BinderException("overwrite_sheet option must be a single boolean value");
-		}
-		if (overwrite_sheet_bool_val.IsNull()) {
-			throw BinderException("overwrite_sheet option must be a single boolean value");
-		}
-		overwrite_sheet = BooleanValue::Get(overwrite_sheet_bool_val);
-	} else {
-		overwrite_sheet = true; // Default to overwrite_sheet to maintain prior behavior
-	}
-
-	const auto overwrite_range_opt = options.find("overwrite_range");
-	bool overwrite_range;
-	if (overwrite_range_opt != options.end()) {
-		if (overwrite_range_opt->second.size() != 1) {
-			throw BinderException("overwrite_range option must be a single boolean value");
-		}
-		string error_msg;
-		Value overwrite_range_bool_val;
-		if (!overwrite_range_opt->second.back().DefaultTryCastAs(LogicalType::BOOLEAN, overwrite_range_bool_val,
-		                                                         &error_msg)) {
-			throw BinderException("overwrite_range option must be a single boolean value");
-		}
-		if (overwrite_range_bool_val.IsNull()) {
-			throw BinderException("overwrite_range option must be a single boolean value");
-		}
-		overwrite_range = BooleanValue::Get(overwrite_range_bool_val);
-	} else {
-		overwrite_range = false;
-	}
-
-	const auto header_opt = options.find("header");
-	bool header;
-	if (header_opt != options.end()) {
-		if (header_opt->second.size() != 1) {
-			throw BinderException("header option must be a single boolean value");
-		}
-		string error_msg;
-		Value header_bool_val;
-		if (!header_opt->second.back().DefaultTryCastAs(LogicalType::BOOLEAN, header_bool_val, &error_msg)) {
-			throw BinderException("header option must be a single boolean value");
-		}
-		if (header_bool_val.IsNull()) {
-			throw BinderException("header option must be a single boolean value");
-		}
-		header = BooleanValue::Get(header_bool_val);
-	} else {
-		header = true;
-		// If we are in the append case, default to no header instead.
-		if (!overwrite_sheet && !overwrite_range) {
-			header = false;
-		}
+	if (create_if_not_exists && sheet.empty()) {
+		throw BinderException("Must provide sheet name");
 	}
 
 	return make_uniq<GSheetWriteBindData>(file_path, sql_types, names, sheet, range, overwrite_sheet, overwrite_range,
-	                                      header);
+	                                      create_if_not_exists, header);
 }
 
 unique_ptr<GlobalFunctionData> GSheetCopyFunction::GSheetWriteInitializeGlobal(ClientContext &context,
@@ -152,6 +112,16 @@ unique_ptr<GlobalFunctionData> GSheetCopyFunction::GSheetWriteInitializeGlobal(C
 	} else {
 		auto sheet = client.Spreadsheets(spreadsheet_id).GetSheetById(sheet_id);
 		sheet_name = sheet.properties.title;
+	}
+
+	// Create sheet if not exist (if enabled)
+	if (options.create_if_not_exists) {
+		try {
+			auto sheet = client.Spreadsheets(spreadsheet_id).GetSheetByName(sheet_name);
+			// sheet already exists so we need to ignore this instruction from the user
+		} catch (sheets::SheetNotFoundException &_) {
+			client.Spreadsheets(spreadsheet_id).CreateSheet(sheet_name);
+		}
 	}
 
 	if (!options.range.empty()) {

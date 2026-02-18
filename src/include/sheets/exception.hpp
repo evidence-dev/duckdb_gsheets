@@ -16,8 +16,7 @@ class SheetsApiException : public SheetsException {
 public:
 	SheetsApiException(int statusCode, const std::string &apiMessage)
 	    : SheetsException("Google Sheets API error (" + std::to_string(statusCode) + "): " + apiMessage),
-	      statusCode(statusCode),
-	      apiMessage(apiMessage) {
+	      statusCode(statusCode), apiMessage(apiMessage) {
 	}
 
 	int GetStatusCode() const {
@@ -51,6 +50,12 @@ public:
 
 private:
 	std::string identifier;
+};
+
+class SheetNotCreatedException : public SheetsException {
+public:
+	explicit SheetNotCreatedException(const std::string &name) : SheetsException("Sheet not created: " + name) {
+	}
 };
 
 } // namespace sheets

@@ -118,7 +118,7 @@ TEST_CASE("SpreadsheetResource::Values returns working ValuesResource", "[spread
 // =============================================================================
 
 // Helper: common spreadsheet response with multiple sheets
-static const char *MULTI_SHEET_RESPONSE = R"({
+static const char *const MULTI_SHEET_RESPONSE = R"({
 	"spreadsheetId": "abc123",
 	"properties": {"title": "Test Spreadsheet"},
 	"sheets": [
@@ -204,4 +204,24 @@ TEST_CASE("SpreadsheetResource::GetSheetByIndex throws when not found", "[spread
 	duckdb::sheets::SpreadsheetResource spreadsheet(mockHttp, headers, "https://sheets.googleapis.com/v4", "abc123");
 
 	REQUIRE_THROWS_AS(spreadsheet.GetSheetByIndex(100), duckdb::sheets::SheetNotFoundException);
+}
+
+// =============================================================================
+// SpreadsheetResource::GetSheetByIndex Tests
+// =============================================================================
+
+TEST_CASE("SpreadsheetResource::CreateSheet returns new sheet", "[spreadsheet]") {
+	duckdb::sheets::MockHttpClient mockHttp;
+	mockHttp.AddResponse({200, {}, R"({
+	                     	"replies": [
+	                     		{"addSheet": {"properties": {"title": "test1"}}}
+	                     	]
+	                     })"});
+
+	duckdb::sheets::HttpHeaders headers;
+	duckdb::sheets::SpreadsheetResource spreadsheet(mockHttp, headers, "https://sheets.googleapis.com/v4", "abc123");
+
+	auto sheet = spreadsheet.CreateSheet("test1");
+
+	REQUIRE(sheet.properties.title == "test1");
 }

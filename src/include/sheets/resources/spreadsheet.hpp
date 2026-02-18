@@ -15,15 +15,19 @@ public:
 
 	SpreadsheetMetadata Get();
 
-	SheetMetadata GetSheetById(int sheetId);
+	SheetMetadata GetSheetById(const int sheetId);
 	SheetMetadata GetSheetById(const std::string &sheetId);
 	SheetMetadata GetSheetByName(const std::string &name);
-	SheetMetadata GetSheetByIndex(int index);
+	SheetMetadata GetSheetByIndex(const int index);
+
+	SheetMetadata CreateSheet(const std::string &name);
 
 	ValuesResource Values();
 
 private:
 	std::string spreadsheetId;
+
+	SpreadsheetBatchUpdateResponse BatchUpdate(const SpreadsheetBatchUpdateRequest &req);
 };
 
 } // namespace sheets
