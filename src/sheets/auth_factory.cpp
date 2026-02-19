@@ -3,7 +3,6 @@
 #include "utils/secret.hpp"
 #include "sheets/auth/bearer_token_auth.hpp"
 #include "sheets/auth/service_account_auth.hpp"
-#include <cstdio>
 
 namespace duckdb {
 namespace sheets {
