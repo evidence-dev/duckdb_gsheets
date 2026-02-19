@@ -1,6 +1,5 @@
 #include <utility>
 
-#include "duckdb/common/case_insensitive_map.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/exception/binder_exception.hpp"
 #include "duckdb/common/file_system.hpp"
@@ -9,6 +8,8 @@
 
 #include "gsheets_copy.hpp"
 #include "gsheets_utils.hpp"
+
+#include "utils/options.hpp"
 
 #include "sheets/auth_factory.hpp"
 #include "sheets/client.hpp"
@@ -26,44 +27,6 @@ GSheetCopyFunction::GSheetCopyFunction() : CopyFunction("gsheet") {
 	copy_to_sink = GSheetWriteSink;
 }
 
-static std::string GetStringOption(const case_insensitive_map_t<vector<Value>> &options, const std::string &name,
-                                   const std::string &default_value = "") {
-	const auto it = options.find(name);
-	if (it == options.end()) {
-		return default_value;
-	}
-	std::string err;
-	Value val;
-	if (!it->second.back().DefaultTryCastAs(LogicalType::VARCHAR, val, &err)) {
-		throw BinderException(name + " option must be VARCHAR");
-	}
-	if (val.IsNull()) {
-		throw BinderException(name + " option must not be NULL");
-	}
-	return StringValue::Get(val);
-}
-
-// NOTE: the second value in pair is a flag indicating if the value was set by the user
-static std::pair<bool, bool> GetBoolOption(const case_insensitive_map_t<vector<Value>> &options,
-                                           const std::string &name, bool default_value = false) {
-	const auto it = options.find(name);
-	if (it == options.end()) {
-		return std::make_pair(default_value, false);
-	}
-	if (it->second.size() != 1) {
-		throw BinderException(name + " option must be a single boolean value");
-	}
-	std::string err;
-	Value val;
-	if (!it->second.back().DefaultTryCastAs(LogicalType::BOOLEAN, val, &err)) {
-		throw BinderException(name + " option must be a single boolean value");
-	}
-	if (val.IsNull()) {
-		throw BinderException(name + " option must be a single boolean value");
-	}
-	return std::make_pair(BooleanValue::Get(val), true);
-}
-
 unique_ptr<FunctionData> GSheetCopyFunction::GSheetWriteBind(ClientContext &context, CopyFunctionBindInput &input,
                                                              const vector<string> &names,
                                                              const vector<LogicalType> &sql_types) {
@@ -71,13 +34,13 @@ unique_ptr<FunctionData> GSheetCopyFunction::GSheetWriteBind(ClientContext &cont
 	string file_path = input.info.file_path;
 	auto options = input.info.options;
 
-	auto sheet = GetStringOption(options, "sheet");
-	auto range = GetStringOption(options, "range");
-	bool overwrite_sheet = GetBoolOption(options, "overwrite_sheet", true).first;
-	bool overwrite_range = GetBoolOption(options, "overwrite_range", false).first;
-	bool create_if_not_exists = GetBoolOption(options, "create_if_not_exists", false).first;
+	auto sheet = duckdb::sheets::GetStringOption(options, "sheet");
+	auto range = duckdb::sheets::GetStringOption(options, "range");
+	bool overwrite_sheet = duckdb::sheets::GetBoolOption(options, "overwrite_sheet", true).first;
+	bool overwrite_range = duckdb::sheets::GetBoolOption(options, "overwrite_range", false).first;
+	bool create_if_not_exists = duckdb::sheets::GetBoolOption(options, "create_if_not_exists", false).first;
 
-	auto header_result = GetBoolOption(options, "header", true);
+	auto header_result = duckdb::sheets::GetBoolOption(options, "header", true);
 	bool header = header_result.second ? header_result.first : (overwrite_range || overwrite_sheet);
 
 	if (create_if_not_exists && sheet.empty()) {

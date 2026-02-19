@@ -66,8 +66,16 @@ std::string ServiceAccountAuth::CreateJwt() {
 	std::string claimsB64 = Base64UrlEncode(claimSet.dump());
 	std::string signInput = headerB64 + "." + claimsB64;
 
+	// Replace literal "\n" with actual newlines
+	std::string pem = privateKey;
+	size_t pos = 0;
+	while ((pos = pem.find("\\n", pos)) != std::string::npos) {
+		pem.replace(pos, 2, "\n");
+		pos += 1;
+	}
+
 	// Parse PEM private key into EVP_PKEY (RAII handles cleanup)
-	BIOPtr bio(BIO_new_mem_buf(privateKey.c_str(), -1));
+	BIOPtr bio(BIO_new_mem_buf(pem.c_str(), -1));
 	if (!bio) {
 		throw duckdb::IOException("Failed to create BIO for private key");
 	}
