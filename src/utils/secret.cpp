@@ -19,7 +19,7 @@ const KeyValueSecret *GetGSheetSecret(ClientContext &ctx) {
 		return nullptr;
 	}
 	auto &secret = match.GetSecret();
-	return dynamic_cast<const KeyValueSecret *>(&secret);
+	return static_cast<const KeyValueSecret *>(&secret);
 }
 
 } // namespace sheets
