@@ -50,6 +50,14 @@ CREATE SECRET (
     PROVIDER key_file,
     FILEPATH '<path_to_JSON_file_with_private_key>'
 );
+
+-- OR by passing the secret directly
+CREATE SECRET (
+    TYPE gsheet,
+    PROVIDER key_file,
+    EMAIL '<service_account_email>',
+    SECRET '<private_key>'
+);
 ```
 
 ### HTTP Proxy

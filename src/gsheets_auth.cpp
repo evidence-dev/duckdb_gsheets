@@ -2,10 +2,11 @@
 #include <cstdlib>
 #include <json.hpp>
 
-#include "duckdb.hpp"
+#include "duckdb/common/exception/binder_exception.hpp"
 
 #include "gsheets_auth.hpp"
 #include "gsheets_utils.hpp"
+#include "utils/options.hpp"
 
 using json = nlohmann::json;
 
@@ -30,7 +31,6 @@ static void RedactCommonKeys(KeyValueSecret &result) {
 	result.redact_keys.insert("proxy_password");
 }
 
-// TODO: Maybe this should be a KeyValueSecret
 static unique_ptr<BaseSecret> CreateGsheetSecretFromAccessToken(ClientContext &context, CreateSecretInput &input) {
 	auto scope = input.scope;
 
@@ -63,23 +63,31 @@ static unique_ptr<BaseSecret> CreateGsheetSecretFromOAuth(ClientContext &context
 	return std::move(result);
 }
 
-// TODO: Maybe this should be a KeyValueSecret
 static unique_ptr<BaseSecret> CreateGsheetSecretFromKeyFile(ClientContext &context, CreateSecretInput &input) {
 	auto scope = input.scope;
 
 	auto result = make_uniq<KeyValueSecret>(scope, input.type, input.provider, input.name);
 
-	// Want to store the private key and email in case the secret is persisted
-	std::string filepath_key = "filepath";
-	auto filepath = (input.options.find(filepath_key)->second).ToString();
-
-	std::ifstream ifs(filepath);
-	if (!ifs.is_open()) {
-		throw IOException("Could not open JSON key file at: " + filepath);
+	std::string email, secret;
+	auto filepath = duckdb::sheets::GetStringOption(input.options, "filepath");
+	if (filepath.empty()) {
+		email = duckdb::sheets::GetStringOption(input.options, "email");
+		if (email.empty()) {
+			throw BinderException("Must provide email if not using filepath");
+		}
+		secret = duckdb::sheets::GetStringOption(input.options, "secret");
+		if (email.empty()) {
+			throw BinderException("Must provide secret value if not using filepath");
+		}
+	} else {
+		std::ifstream ifs(filepath);
+		if (!ifs.is_open()) {
+			throw IOException("Could not open JSON key file at: " + filepath);
+		}
+		json credentials_file = json::parse(ifs);
+		email = credentials_file["client_email"].get<std::string>();
+		secret = credentials_file["private_key"].get<std::string>();
 	}
-	json credentials_file = json::parse(ifs);
-	std::string email = credentials_file["client_email"].get<std::string>();
-	std::string secret = credentials_file["private_key"].get<std::string>();
 
 	// Manage specific secret option
 	(*result).secret_map["email"] = Value(email);
@@ -119,6 +127,8 @@ void CreateGsheetSecretFunctions::Register(ExtensionLoader &loader) {
 	// Register the key_file secret provider
 	CreateSecretFunction key_file_function = {type, "key_file", CreateGsheetSecretFromKeyFile, {}};
 	key_file_function.named_parameters["filepath"] = LogicalType::VARCHAR;
+	key_file_function.named_parameters["email"] = LogicalType::VARCHAR;
+	key_file_function.named_parameters["secret"] = LogicalType::VARCHAR;
 	RegisterCommonSecretParameters(key_file_function);
 
 	loader.RegisterSecretType(secret_type);

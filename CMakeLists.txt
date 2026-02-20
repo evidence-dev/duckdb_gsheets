@@ -36,6 +36,7 @@ set(EXTENSION_SOURCES
     src/sheets/range.cpp
     src/sheets/auth_factory.cpp
     src/utils/secret.cpp
+    src/utils/options.cpp
     src/utils/proxy.cpp
     src/utils/version.cpp)
 
