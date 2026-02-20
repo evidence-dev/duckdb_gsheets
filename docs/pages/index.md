@@ -51,7 +51,7 @@ CREATE SECRET (
     FILEPATH '<path_to_JSON_file_with_private_key>'
 );
 
--- OR without a file path
+-- OR by passing the secret directly
 CREATE SECRET (
     TYPE gsheet,
     PROVIDER key_file,
