@@ -16,5 +16,7 @@ std::string Base64UrlEncode(const unsigned char *data, size_t len);
 
 std::string Base64UrlEncode(const std::string &input);
 
+std::string NormalizePemKey(const std::string &key);
+
 } // namespace sheets
 } // namespace duckdb

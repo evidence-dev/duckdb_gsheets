@@ -42,5 +42,15 @@ std::string Base64UrlEncode(const std::string &input) {
 	return Base64UrlEncode(reinterpret_cast<const unsigned char *>(input.c_str()), input.length());
 }
 
+std::string NormalizePemKey(const std::string &key) {
+	std::string pem = key;
+	size_t pos = 0;
+	while ((pos = pem.find("\\n", pos)) != std::string::npos) {
+		pem.replace(pos, 2, "\n");
+		pos += 1;
+	}
+	return pem;
+}
+
 } // namespace sheets
 } // namespace duckdb

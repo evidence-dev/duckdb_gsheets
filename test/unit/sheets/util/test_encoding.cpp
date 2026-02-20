@@ -67,3 +67,23 @@ TEST_CASE("Base64UrlEncode JWT header", "[encoding]") {
 	std::string header = R"({"alg":"RS256","typ":"JWT"})";
 	REQUIRE(duckdb::sheets::Base64UrlEncode(header) == "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9");
 }
+
+TEST_CASE("NormalizePemKey Key with literal \\n sequences") {
+	std::string input = "-----BEGIN PRIVATE KEY-----\\nMIIE...\\n-----END PRIVATE KEY-----\\n";
+	std::string expected = "-----BEGIN PRIVATE KEY-----\nMIIE...\n-----END PRIVATE KEY-----\n";
+	REQUIRE(duckdb::sheets::NormalizePemKey(input) == expected);
+}
+
+TEST_CASE("NormalizePemKey Key already has real newlines") {
+	std::string input = "-----BEGIN PRIVATE KEY-----\nMIIE...\n-----END PRIVATE KEY-----\n";
+	REQUIRE(duckdb::sheets::NormalizePemKey(input) == input);
+}
+
+TEST_CASE("NormalizePemKey empty string") {
+	REQUIRE(duckdb::sheets::NormalizePemKey("") == "");
+}
+
+TEST_CASE("NormalizePemKey no newlines at all") {
+	std::string input = "just-a-string-with-no-newlines";
+	REQUIRE(duckdb::sheets::NormalizePemKey(input) == input);
+}
