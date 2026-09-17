@@ -146,6 +146,34 @@ void CreateGsheetSecretFunctions::Register(ExtensionLoader &loader) {
 	loader.RegisterFunction(key_file_function);
 }
 
+#ifdef _WIN32
+using socket_t = SOCKET;
+static constexpr socket_t INVALID_SOCKET_VALUE = INVALID_SOCKET;
+
+static void CloseSocket(socket_t s) {
+	closesocket(s);
+}
+static int SocketRecv(socket_t s, char *buf, int len) {
+	return recv(s, buf, len, 0);
+}
+static int SocketSend(socket_t s, const char *buf, int len) {
+	return send(s, buf, len, 0);
+}
+#else
+using socket_t = int;
+static constexpr socket_t INVALID_SOCKET_VALUE = -1;
+
+static void CloseSocket(socket_t s) {
+	close(s);
+}
+static int SocketRecv(socket_t s, char *buf, int len) {
+	return static_cast<int>(read(s, buf, static_cast<size_t>(len)));
+}
+static int SocketSend(socket_t s, const char *buf, int len) {
+	return static_cast<int>(write(s, buf, static_cast<size_t>(len)));
+}
+#endif
+
 std::string InitiateOAuthFlow() {
 	// Runs a short-lived local HTTP listener so the OAuth redirect can hand back
 	// the access token automatically, without the user having to copy/paste it.
@@ -163,15 +191,15 @@ std::string InitiateOAuthFlow() {
 #endif
 
 	// Create socket
-	int server_fd = socket(AF_INET, SOCK_STREAM, 0);
-	if (server_fd < 0) {
+	socket_t server_fd = socket(AF_INET, SOCK_STREAM, 0);
+	if (server_fd == INVALID_SOCKET_VALUE) {
 		throw IOException("Failed to create socket");
 	}
 
 	// Set socket options to allow reuse
 	int opt = 1;
-	if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
-		close(server_fd);
+	if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char *>(&opt), sizeof(opt)) < 0) {
+		CloseSocket(server_fd);
 		throw IOException("Failed to set socket options");
 	}
 
@@ -182,12 +210,12 @@ std::string InitiateOAuthFlow() {
 	address.sin_port = htons(PORT);
 
 	if (bind(server_fd, (struct sockaddr *)&address, sizeof(address)) < 0) {
-		close(server_fd);
+		CloseSocket(server_fd);
 		throw IOException("Failed to bind to port " + std::to_string(PORT));
 	}
 
 	if (listen(server_fd, 1) < 0) {
-		close(server_fd);
+		CloseSocket(server_fd);
 		throw IOException("Failed to listen on socket");
 	}
 
@@ -211,15 +239,15 @@ std::string InitiateOAuthFlow() {
 	std::cout << auth_request_url << '\n';
 
 	// Accept first connection (GET request)
-	int client_socket;
-	if ((client_socket = accept(server_fd, nullptr, nullptr)) < 0) {
-		close(server_fd);
+	socket_t client_socket = accept(server_fd, nullptr, nullptr);
+	if (client_socket == INVALID_SOCKET_VALUE) {
+		CloseSocket(server_fd);
 		throw IOException("Failed to accept connection");
 	}
 
 	// Read initial request
 	char buffer[4096] = {0};
-	ssize_t bytes_read = read(client_socket, buffer, sizeof(buffer));
+	int bytes_read = SocketRecv(client_socket, buffer, static_cast<int>(sizeof(buffer)));
 	(void)bytes_read;
 
 	// Send response to browser: extract the token from the URL fragment client-side
@@ -242,25 +270,26 @@ std::string InitiateOAuthFlow() {
 	                        "  });"
 	                        "}"
 	                        "</script></body></html>";
-	write(client_socket, response.c_str(), response.length());
-	close(client_socket);
+	SocketSend(client_socket, response.c_str(), static_cast<int>(response.length()));
+	CloseSocket(client_socket);
 
 	// Accept second connection (POST request)
-	if ((client_socket = accept(server_fd, nullptr, nullptr)) < 0) {
-		close(server_fd);
+	client_socket = accept(server_fd, nullptr, nullptr);
+	if (client_socket == INVALID_SOCKET_VALUE) {
+		CloseSocket(server_fd);
 		throw IOException("Failed to accept second connection");
 	}
 
 	// Read the POST request
 	memset(buffer, 0, sizeof(buffer));
-	bytes_read = read(client_socket, buffer, sizeof(buffer));
+	bytes_read = SocketRecv(client_socket, buffer, static_cast<int>(sizeof(buffer)));
 	std::string token_request(buffer);
 
 	// Send response to POST request
 	std::string post_response = "HTTP/1.1 200 OK\r\n"
 	                             "Access-Control-Allow-Origin: *\r\n"
 	                             "Content-Length: 0\r\n\r\n";
-	write(client_socket, post_response.c_str(), post_response.length());
+	SocketSend(client_socket, post_response.c_str(), static_cast<int>(post_response.length()));
 
 	// Extract token from POST body
 	size_t body_start = token_request.find("\r\n\r\n");
@@ -269,8 +298,8 @@ std::string InitiateOAuthFlow() {
 	}
 
 	// Clean up
-	close(client_socket);
-	close(server_fd);
+	CloseSocket(client_socket);
+	CloseSocket(server_fd);
 
 #ifdef _WIN32
 	WSACleanup();
