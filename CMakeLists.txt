@@ -52,6 +52,22 @@ build_loadable_extension(${TARGET_NAME} " " ${EXTENSION_SOURCES})
 target_link_libraries(${EXTENSION_NAME} OpenSSL::SSL OpenSSL::Crypto)
 target_link_libraries(${LOADABLE_EXTENSION_NAME} OpenSSL::SSL OpenSSL::Crypto)
 
+# duckdb's vendored httplib now loads TLS roots from the macOS Keychain by
+# default (CPPHTTPLIB_USE_CERTS_FROM_MACOSX_KEYCHAIN), which needs Security.framework.
+if(APPLE)
+  target_link_libraries(${EXTENSION_NAME} "-framework Security" "-framework CoreFoundation")
+  target_link_libraries(${LOADABLE_EXTENSION_NAME} "-framework Security" "-framework CoreFoundation")
+endif()
+
+# The local OAuth listener (src/sheets/auth/oauth_listener.cpp) uses Winsock on
+# Windows. socket_compat.hpp's #pragma comment(lib, "ws2_32.lib") only takes
+# effect for MSVC, so link ws2_32 explicitly here for other toolchains
+# (e.g. MinGW/Ninja generators), matching test/unit/CMakeLists.txt.
+if(WIN32)
+  target_link_libraries(${EXTENSION_NAME} ws2_32)
+  target_link_libraries(${LOADABLE_EXTENSION_NAME} ws2_32)
+endif()
+
 install(
   TARGETS ${EXTENSION_NAME}
   EXPORT "${DUCKDB_EXPORT_SET}"

@@ -129,6 +129,32 @@ bool WaitUntil(std::atomic<bool> &flag) {
 	return flag;
 }
 
+// Joins the wrapped thread on destruction if it hasn't been joined already.
+// Without this, a REQUIRE failing between spawning server_thread and its
+// explicit join() (e.g. WaitUntil(listening) timing out on a slow/contended
+// CI runner) would unwind the stack with a still-joinable std::thread and
+// call std::terminate, crashing the whole test binary instead of just
+// failing the one test case.
+class AutoJoinThread {
+public:
+	template <typename Func> explicit AutoJoinThread(Func &&func) : thread_(std::forward<Func>(func)) {
+	}
+	~AutoJoinThread() {
+		join();
+	}
+	AutoJoinThread(const AutoJoinThread &) = delete;
+	AutoJoinThread &operator=(const AutoJoinThread &) = delete;
+
+	void join() {
+		if (thread_.joinable()) {
+			thread_.join();
+		}
+	}
+
+private:
+	std::thread thread_;
+};
+
 // Sends a GET (simulating the OAuth redirect landing) then a POST with the
 // given body (simulating the redirect page's JS posting back what it parsed
 // out of the URL fragment), draining each response.
@@ -163,7 +189,7 @@ TEST_CASE("RunLocalOAuthListener returns the token posted with the matching stat
 	std::string result;
 	std::exception_ptr thread_exception;
 
-	std::thread server_thread([&]() {
+	AutoJoinThread server_thread([&]() {
 		try {
 			result = RunLocalOAuthListener(port, state, [&]() { listening = true; });
 		} catch (...) {
@@ -195,7 +221,7 @@ TEST_CASE("RunLocalOAuthListener ignores a callback with the wrong state and wai
 	std::string result;
 	std::exception_ptr thread_exception;
 
-	std::thread server_thread([&]() {
+	AutoJoinThread server_thread([&]() {
 		try {
 			result = RunLocalOAuthListener(port, state, [&]() { listening = true; });
 		} catch (...) {
@@ -230,7 +256,7 @@ TEST_CASE("RunLocalOAuthListener throws after exhausting its attempt budget", "[
 	std::atomic<bool> listening {false};
 	bool threw = false;
 
-	std::thread server_thread([&]() {
+	AutoJoinThread server_thread([&]() {
 		try {
 			RunLocalOAuthListener(port, state, [&]() { listening = true; }, /*max_attempts=*/2);
 		} catch (const std::exception &) {

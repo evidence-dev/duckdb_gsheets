@@ -1,5 +1,6 @@
 #include "sheets/auth/oauth_listener.hpp"
 
+#include <chrono>
 #include <cstdint>
 #include <cstring>
 
@@ -13,9 +14,30 @@ namespace sheets {
 namespace {
 
 constexpr int BUFFER_SIZE = 8192;
+// accept() has no built-in timeout, so a browser that never completes the
+// redirect (headless environment, user abandons the flow, etc.) would
+// otherwise block this call forever regardless of max_attempts. Poll with
+// select() instead and bound the whole wait by a wall-clock deadline.
+constexpr int ACCEPT_POLL_SECONDS = 1;
+constexpr int TOTAL_TIMEOUT_SECONDS = 300;
 
 bool StartsWith(const std::string &s, const std::string &prefix) {
 	return s.compare(0, prefix.size(), prefix) == 0;
+}
+
+// Waits up to `timeout_seconds` for `server_fd` to have an incoming
+// connection ready to accept(). Returns false on timeout so the caller can
+// re-check the overall deadline instead of blocking indefinitely.
+bool WaitForConnection(socket_t server_fd, int timeout_seconds) {
+	fd_set read_fds;
+	FD_ZERO(&read_fds);
+	FD_SET(server_fd, &read_fds);
+
+	struct timeval tv;
+	tv.tv_sec = timeout_seconds;
+	tv.tv_usec = 0;
+
+	return select(static_cast<int>(server_fd) + 1, &read_fds, nullptr, nullptr, &tv) > 0;
 }
 
 void SendResponse(socket_t client_socket, const std::string &response) {
@@ -144,12 +166,24 @@ std::string RunLocalOAuthListener(int port, const std::string &expected_state,
 	// a single connection can't be trusted to be the real OAuth redirect.
 	// Serve the redirect page to GETs and keep accepting connections until a
 	// POST carrying the correct `state` arrives (see ParseTokenPayload),
-	// ignoring anything else, up to a bounded number of attempts.
-	for (int attempt = 0; attempt < max_attempts; attempt++) {
-		socket_t client_socket = accept(server_fd, nullptr, nullptr);
-		if (client_socket == INVALID_SOCKET_VALUE) {
+	// ignoring anything else, up to a bounded number of attempts - and never
+	// longer than TOTAL_TIMEOUT_SECONDS wall-clock, even if no one ever
+	// connects at all.
+	auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(TOTAL_TIMEOUT_SECONDS);
+	for (int attempt = 0; attempt < max_attempts;) {
+		if (std::chrono::steady_clock::now() >= deadline) {
+			break;
+		}
+		if (!WaitForConnection(server_fd, ACCEPT_POLL_SECONDS)) {
 			continue;
 		}
+
+		socket_t client_socket = accept(server_fd, nullptr, nullptr);
+		if (client_socket == INVALID_SOCKET_VALUE) {
+			attempt++;
+			continue;
+		}
+		attempt++;
 
 		char buffer[BUFFER_SIZE];
 		int bytes_read = SocketRecv(client_socket, buffer, static_cast<int>(sizeof(buffer)));

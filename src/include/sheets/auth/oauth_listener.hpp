@@ -36,7 +36,10 @@ std::string ParseTokenPayload(const std::string &body, const std::string &expect
 // server is actually ready; tests use it to know when it's safe to connect.
 // `max_attempts` bounds how many connections it will accept/inspect before
 // giving up (exposed mainly so tests don't have to wait through the full
-// production budget to exercise the timeout path).
+// production budget to exercise the timeout path). It also gives up after a
+// fixed wall-clock deadline regardless of `max_attempts`, so a browser that
+// never completes the redirect (headless environment, abandoned flow, etc.)
+// can't leave the caller blocked forever.
 std::string RunLocalOAuthListener(int port, const std::string &expected_state,
                                    const std::function<void()> &on_listening = nullptr, int max_attempts = 20);
 
