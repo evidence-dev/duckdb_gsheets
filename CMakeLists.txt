@@ -23,6 +23,7 @@ set(EXTENSION_SOURCES
     src/gsheets_utils.cpp
     src/sheets/auth/bearer_token_auth.cpp
     src/sheets/auth/oauth_auth.cpp
+    src/sheets/auth/oauth_listener.cpp
     src/sheets/auth/service_account_auth.cpp
     src/sheets/resources/base.cpp
     src/sheets/resources/values.cpp
