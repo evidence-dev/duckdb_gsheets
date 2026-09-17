@@ -19,7 +19,6 @@ constexpr int BUFFER_SIZE = 8192;
 // otherwise block this call forever regardless of max_attempts. Poll with
 // select() instead and bound the whole wait by a wall-clock deadline.
 constexpr int ACCEPT_POLL_SECONDS = 1;
-constexpr int TOTAL_TIMEOUT_SECONDS = 300;
 
 bool StartsWith(const std::string &s, const std::string &prefix) {
 	return s.compare(0, prefix.size(), prefix) == 0;
@@ -167,9 +166,9 @@ std::string RunLocalOAuthListener(int port, const std::string &expected_state,
 	// Serve the redirect page to GETs and keep accepting connections until a
 	// POST carrying the correct `state` arrives (see ParseTokenPayload),
 	// ignoring anything else, up to a bounded number of attempts - and never
-	// longer than TOTAL_TIMEOUT_SECONDS wall-clock, even if no one ever
+	// longer than kOAuthListenerTimeoutSeconds wall-clock, even if no one ever
 	// connects at all.
-	auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(TOTAL_TIMEOUT_SECONDS);
+	auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(kOAuthListenerTimeoutSeconds);
 	for (int attempt = 0; attempt < max_attempts;) {
 		if (std::chrono::steady_clock::now() >= deadline) {
 			break;

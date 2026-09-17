@@ -177,6 +177,8 @@ std::string InitiateOAuthFlow() {
 		}
 		std::cout << '\n' << "Waiting for Login via Browser..." << '\n' << '\n';
 		std::cout << auth_request_url << '\n';
+		std::cout << "(This will time out after " << (sheets::kOAuthListenerTimeoutSeconds / 60)
+		           << " minutes if login isn't completed.)" << '\n';
 	};
 
 	return sheets::RunLocalOAuthListener(PORT, state, open_browser);

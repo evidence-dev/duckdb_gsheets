@@ -6,6 +6,12 @@
 namespace duckdb {
 namespace sheets {
 
+// Wall-clock budget RunLocalOAuthListener will wait for a valid callback
+// before giving up, regardless of max_attempts. Exposed so callers (e.g. the
+// message shown while waiting for the browser) can surface it to the user
+// instead of duplicating the number.
+constexpr int kOAuthListenerTimeoutSeconds = 300;
+
 // Builds the Google OAuth2 authorization URL. Pure/side-effect-free so it can
 // be unit tested without any network or browser involved.
 std::string BuildAuthorizationUrl(const std::string &auth_url, const std::string &client_id,
