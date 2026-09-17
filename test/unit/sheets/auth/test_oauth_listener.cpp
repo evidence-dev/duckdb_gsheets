@@ -7,6 +7,7 @@
 #include <string>
 #include <thread>
 
+#include "duckdb/common/exception.hpp"
 #include "sheets/auth/oauth_listener.hpp"
 #include "sheets/auth/socket_compat.hpp"
 
@@ -36,30 +37,49 @@ TEST_CASE("BuildAuthorizationUrl orders parameters client_id, redirect_uri, ...,
 }
 
 // =============================================================================
-// ExtractAccessTokenFromHttpRequest Tests
+// ExtractHttpBody Tests
 // =============================================================================
 
-TEST_CASE("ExtractAccessTokenFromHttpRequest returns the request body", "[oauth_listener]") {
-	std::string request = "POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 5\r\n\r\ntoken";
-	REQUIRE(ExtractAccessTokenFromHttpRequest(request) == "token");
+TEST_CASE("ExtractHttpBody returns the request body", "[oauth_listener]") {
+	std::string request = "POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 5\r\n\r\nhello";
+	REQUIRE(ExtractHttpBody(request) == "hello");
 }
 
-TEST_CASE("ExtractAccessTokenFromHttpRequest handles a realistic ya29 token", "[oauth_listener]") {
-	std::string token = "ya29.a0AfH6SMB_test_token_value";
-	std::string request =
-	    "POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: " + std::to_string(token.length()) + "\r\n\r\n" + token;
-	REQUIRE(ExtractAccessTokenFromHttpRequest(request) == token);
-}
-
-TEST_CASE("ExtractAccessTokenFromHttpRequest returns empty string when there is no body separator",
-          "[oauth_listener]") {
+TEST_CASE("ExtractHttpBody returns empty string when there is no body separator", "[oauth_listener]") {
 	std::string request = "POST / HTTP/1.1\r\nHost: localhost";
-	REQUIRE(ExtractAccessTokenFromHttpRequest(request).empty());
+	REQUIRE(ExtractHttpBody(request).empty());
 }
 
-TEST_CASE("ExtractAccessTokenFromHttpRequest returns empty string for an empty body", "[oauth_listener]") {
+TEST_CASE("ExtractHttpBody returns empty string for an empty body", "[oauth_listener]") {
 	std::string request = "POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\n\r\n";
-	REQUIRE(ExtractAccessTokenFromHttpRequest(request).empty());
+	REQUIRE(ExtractHttpBody(request).empty());
+}
+
+// =============================================================================
+// ParseTokenPayload Tests
+// =============================================================================
+
+TEST_CASE("ParseTokenPayload returns the token when state matches", "[oauth_listener]") {
+	std::string token = ParseTokenPayload("state=abc123&access_token=ya29.realistic-token-value", "abc123");
+	REQUIRE(token == "ya29.realistic-token-value");
+}
+
+TEST_CASE("ParseTokenPayload throws on state mismatch", "[oauth_listener]") {
+	REQUIRE_THROWS_AS(ParseTokenPayload("state=attacker-guess&access_token=forged-token", "abc123"),
+	                  duckdb::IOException);
+}
+
+TEST_CASE("ParseTokenPayload throws when state is missing entirely", "[oauth_listener]") {
+	REQUIRE_THROWS_AS(ParseTokenPayload("access_token=no-state-at-all", "abc123"), duckdb::IOException);
+}
+
+TEST_CASE("ParseTokenPayload throws on malformed payload", "[oauth_listener]") {
+	REQUIRE_THROWS_AS(ParseTokenPayload("not a valid payload", "abc123"), duckdb::IOException);
+	REQUIRE_THROWS_AS(ParseTokenPayload("", "abc123"), duckdb::IOException);
+}
+
+TEST_CASE("ParseTokenPayload throws when the token is empty", "[oauth_listener]") {
+	REQUIRE_THROWS_AS(ParseTokenPayload("state=abc123&access_token=", "abc123"), duckdb::IOException);
 }
 
 // =============================================================================
@@ -75,8 +95,7 @@ namespace {
 
 // High port range, distinct from the extension's real default (8765), so a
 // local dev instance of the extension can't collide with the test.
-constexpr int TEST_PORT_TOKEN = 18765;
-constexpr int TEST_PORT_NO_TOKEN = 18766;
+constexpr int TEST_PORT_BASE = 18765;
 
 bool ConnectToLoopback(int port, socket_t &out_socket) {
 	socket_t sock = socket(AF_INET, SOCK_STREAM, 0);
@@ -110,10 +129,35 @@ bool WaitUntil(std::atomic<bool> &flag) {
 	return flag;
 }
 
+// Sends a GET (simulating the OAuth redirect landing) then a POST with the
+// given body (simulating the redirect page's JS posting back what it parsed
+// out of the URL fragment), draining each response.
+void SendGetThenPost(int port, const std::string &post_body) {
+	socket_t get_socket;
+	REQUIRE(ConnectToLoopback(port, get_socket));
+	std::string get_request = "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n";
+	SocketSend(get_socket, get_request.c_str(), static_cast<int>(get_request.length()));
+	char get_response[4096] = {0};
+	SocketRecv(get_socket, get_response, sizeof(get_response) - 1);
+	CloseSocket(get_socket);
+
+	socket_t post_socket;
+	REQUIRE(ConnectToLoopback(port, post_socket));
+	std::string post_request = "POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: " +
+	                            std::to_string(post_body.length()) + "\r\n\r\n" + post_body;
+	SocketSend(post_socket, post_request.c_str(), static_cast<int>(post_request.length()));
+	char post_response[4096] = {0};
+	SocketRecv(post_socket, post_response, sizeof(post_response) - 1);
+	CloseSocket(post_socket);
+}
+
 } // namespace
 
-TEST_CASE("RunLocalOAuthListener returns the token posted by the redirect page", "[oauth_listener][integration]") {
+TEST_CASE("RunLocalOAuthListener returns the token posted with the matching state",
+          "[oauth_listener][integration]") {
 	InitSockets();
+	const int port = TEST_PORT_BASE;
+	const std::string state = "integration-test-state";
 
 	std::atomic<bool> listening {false};
 	std::string result;
@@ -121,7 +165,7 @@ TEST_CASE("RunLocalOAuthListener returns the token posted by the redirect page",
 
 	std::thread server_thread([&]() {
 		try {
-			result = RunLocalOAuthListener(TEST_PORT_TOKEN, [&]() { listening = true; });
+			result = RunLocalOAuthListener(port, state, [&]() { listening = true; });
 		} catch (...) {
 			thread_exception = std::current_exception();
 		}
@@ -130,25 +174,7 @@ TEST_CASE("RunLocalOAuthListener returns the token posted by the redirect page",
 	REQUIRE(WaitUntil(listening));
 
 	const std::string fake_token = "ya29.fake-integration-test-token";
-
-	// Step 1: simulate the browser's initial GET after the OAuth redirect.
-	socket_t get_socket;
-	REQUIRE(ConnectToLoopback(TEST_PORT_TOKEN, get_socket));
-	std::string get_request = "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n";
-	SocketSend(get_socket, get_request.c_str(), static_cast<int>(get_request.length()));
-	char get_response[4096] = {0};
-	SocketRecv(get_socket, get_response, sizeof(get_response) - 1);
-	CloseSocket(get_socket);
-
-	// Step 2: simulate the page's JS posting the extracted token back to us.
-	socket_t post_socket;
-	REQUIRE(ConnectToLoopback(TEST_PORT_TOKEN, post_socket));
-	std::string post_request = "POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: " +
-	                            std::to_string(fake_token.length()) + "\r\n\r\n" + fake_token;
-	SocketSend(post_socket, post_request.c_str(), static_cast<int>(post_request.length()));
-	char post_response[4096] = {0};
-	SocketRecv(post_socket, post_response, sizeof(post_response) - 1);
-	CloseSocket(post_socket);
+	SendGetThenPost(port, "state=" + state + "&access_token=" + fake_token);
 
 	server_thread.join();
 	CleanupSockets();
@@ -159,15 +185,54 @@ TEST_CASE("RunLocalOAuthListener returns the token posted by the redirect page",
 	REQUIRE(result == fake_token);
 }
 
-TEST_CASE("RunLocalOAuthListener throws when no token is posted", "[oauth_listener][integration]") {
+TEST_CASE("RunLocalOAuthListener ignores a callback with the wrong state and waits for the real one",
+          "[oauth_listener][integration]") {
 	InitSockets();
+	const int port = TEST_PORT_BASE + 1;
+	const std::string state = "correct-state";
+
+	std::atomic<bool> listening {false};
+	std::string result;
+	std::exception_ptr thread_exception;
+
+	std::thread server_thread([&]() {
+		try {
+			result = RunLocalOAuthListener(port, state, [&]() { listening = true; });
+		} catch (...) {
+			thread_exception = std::current_exception();
+		}
+	});
+
+	REQUIRE(WaitUntil(listening));
+
+	// An attacker (or an unrelated stray request) racing the real flow with
+	// a forged/mismatched state must not be accepted.
+	SendGetThenPost(port, "state=wrong-state&access_token=attacker-forged-token");
+
+	// The real redirect follows shortly after, with the correct state.
+	const std::string real_token = "ya29.the-real-token";
+	SendGetThenPost(port, "state=" + state + "&access_token=" + real_token);
+
+	server_thread.join();
+	CleanupSockets();
+
+	if (thread_exception) {
+		std::rethrow_exception(thread_exception);
+	}
+	REQUIRE(result == real_token);
+}
+
+TEST_CASE("RunLocalOAuthListener throws after exhausting its attempt budget", "[oauth_listener][integration]") {
+	InitSockets();
+	const int port = TEST_PORT_BASE + 2;
+	const std::string state = "correct-state";
 
 	std::atomic<bool> listening {false};
 	bool threw = false;
 
 	std::thread server_thread([&]() {
 		try {
-			RunLocalOAuthListener(TEST_PORT_NO_TOKEN, [&]() { listening = true; });
+			RunLocalOAuthListener(port, state, [&]() { listening = true; }, /*max_attempts=*/2);
 		} catch (const std::exception &) {
 			threw = true;
 		}
@@ -175,22 +240,10 @@ TEST_CASE("RunLocalOAuthListener throws when no token is posted", "[oauth_listen
 
 	REQUIRE(WaitUntil(listening));
 
-	socket_t get_socket;
-	REQUIRE(ConnectToLoopback(TEST_PORT_NO_TOKEN, get_socket));
-	std::string get_request = "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n";
-	SocketSend(get_socket, get_request.c_str(), static_cast<int>(get_request.length()));
-	char get_response[4096] = {0};
-	SocketRecv(get_socket, get_response, sizeof(get_response) - 1);
-	CloseSocket(get_socket);
-
-	// Post an empty body, as if the redirect page never received a token.
-	socket_t post_socket;
-	REQUIRE(ConnectToLoopback(TEST_PORT_NO_TOKEN, post_socket));
-	std::string post_request = "POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\n\r\n";
-	SocketSend(post_socket, post_request.c_str(), static_cast<int>(post_request.length()));
-	char post_response[4096] = {0};
-	SocketRecv(post_socket, post_response, sizeof(post_response) - 1);
-	CloseSocket(post_socket);
+	// max_attempts=2 covers exactly one GET+POST round; since this POST
+	// carries the wrong state, that exhausts the budget and the listener
+	// should give up rather than hang indefinitely.
+	SendGetThenPost(port, "state=wrong&access_token=nope");
 
 	server_thread.join();
 	CleanupSockets();

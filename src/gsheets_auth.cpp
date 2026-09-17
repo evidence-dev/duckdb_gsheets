@@ -154,18 +154,31 @@ std::string InitiateOAuthFlow() {
 	// Open the browser only once the listener is actually ready to receive the
 	// redirect (RunLocalOAuthListener invokes this after it starts listening).
 	auto open_browser = [&auth_request_url]() {
-#ifdef _WIN32
-		system(("start \"\" \"" + auth_request_url + "\"").c_str());
-#elif __APPLE__
-		system(("open \"" + auth_request_url + "\"").c_str());
-#elif __linux__
-		system(("xdg-open \"" + auth_request_url + "\"").c_str());
+		bool should_open_browser = true;
+
+#ifdef __linux__
+		// On Linux, check for a headless environment to avoid xdg-open erroring out.
+		const char *display = std::getenv("DISPLAY");
+		const char *wayland_display = std::getenv("WAYLAND_DISPLAY");
+		if (!display && !wayland_display) {
+			should_open_browser = false;
+		}
 #endif
+
+		if (should_open_browser) {
+#ifdef _WIN32
+			system(("start \"\" \"" + auth_request_url + "\"").c_str());
+#elif __APPLE__
+			system(("open \"" + auth_request_url + "\"").c_str());
+#elif __linux__
+			system(("xdg-open \"" + auth_request_url + "\"").c_str());
+#endif
+		}
 		std::cout << '\n' << "Waiting for Login via Browser..." << '\n' << '\n';
 		std::cout << auth_request_url << '\n';
 	};
 
-	return sheets::RunLocalOAuthListener(PORT, open_browser);
+	return sheets::RunLocalOAuthListener(PORT, state, open_browser);
 }
 
 } // namespace duckdb
