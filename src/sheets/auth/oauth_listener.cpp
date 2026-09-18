@@ -5,10 +5,15 @@
 #include <chrono>
 #include <cstdint>
 #include <cstring>
+#include <iostream>
 
 #include "duckdb/common/exception.hpp"
 
 #include "sheets/auth/socket_compat.hpp"
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 namespace duckdb {
 namespace sheets {
@@ -214,6 +219,59 @@ std::string BuildAckResponse() {
 	return "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
 }
 
+std::string TrimWhitespace(const std::string &s) {
+	size_t start = s.find_first_not_of(" \t\r\n");
+	if (start == std::string::npos) {
+		return "";
+	}
+	size_t end = s.find_last_not_of(" \t\r\n");
+	return s.substr(start, end - start + 1);
+}
+
+// Finds `key=` in `text` at a param boundary (start of string, or right
+// after '&', '#' or '?') and returns the value up to the next '&' (or end of
+// string). Returns "" if `key` never appears at a boundary - e.g. it's only
+// present as a suffix of a longer param name.
+std::string ExtractQueryParam(const std::string &text, const std::string &key) {
+	std::string marker = key + "=";
+	size_t search_from = 0;
+	while (true) {
+		size_t pos = text.find(marker, search_from);
+		if (pos == std::string::npos) {
+			return "";
+		}
+		bool at_boundary = pos == 0 || text[pos - 1] == '&' || text[pos - 1] == '#' || text[pos - 1] == '?';
+		if (at_boundary) {
+			size_t value_start = pos + marker.size();
+			size_t value_end = text.find('&', value_start);
+			size_t value_len = value_end == std::string::npos ? std::string::npos : value_end - value_start;
+			return text.substr(value_start, value_len);
+		}
+		search_from = pos + 1;
+	}
+}
+
+// Non-blocking check for whether stdin has unread input. Used to decide
+// whether it's safe to call the (line-buffered, otherwise blocking)
+// std::getline in TryReadPastedLine without stalling the caller's poll loop.
+#ifdef _WIN32
+bool StdinHasPendingData() {
+	HANDLE handle = GetStdHandle(STD_INPUT_HANDLE);
+	if (handle == INVALID_HANDLE_VALUE || handle == nullptr) {
+		return false;
+	}
+	return WaitForSingleObject(handle, 0) == WAIT_OBJECT_0;
+}
+#else
+bool StdinHasPendingData() {
+	fd_set read_fds;
+	FD_ZERO(&read_fds);
+	FD_SET(STDIN_FILENO, &read_fds);
+	struct timeval tv = {0, 0};
+	return select(STDIN_FILENO + 1, &read_fds, nullptr, nullptr, &tv) > 0;
+}
+#endif
+
 } // namespace
 
 std::string BuildAuthorizationUrl(const std::string &auth_url, const std::string &client_id,
@@ -260,9 +318,45 @@ std::string ParseTokenPayload(const std::string &body, const std::string &expect
 	return token;
 }
 
+std::string ExtractPastedToken(const std::string &pasted, const std::string &expected_state) {
+	std::string trimmed = TrimWhitespace(pasted);
+	if (trimmed.empty()) {
+		throw IOException("Pasted input was empty");
+	}
+
+	if (trimmed.find("access_token=") == std::string::npos) {
+		// No query string to parse - treat the whole line as the bare
+		// token. No state to check here, unlike ParseTokenPayload: this
+		// came from the user directly pasting into their own terminal, not
+		// an unsolicited request reaching the listener, so there's nothing
+		// for the CSRF check to protect against.
+		return trimmed;
+	}
+
+	std::string token = ExtractQueryParam(trimmed, "access_token");
+	if (token.empty()) {
+		throw IOException("Could not find access_token in pasted input");
+	}
+
+	std::string state = ExtractQueryParam(trimmed, "state");
+	if (!state.empty() && state != expected_state) {
+		throw IOException("OAuth state mismatch - rejecting pasted token");
+	}
+
+	return token;
+}
+
+bool TryReadPastedLine(std::string &line) {
+	if (!StdinHasPendingData()) {
+		return false;
+	}
+	return static_cast<bool>(std::getline(std::cin, line));
+}
+
 std::string RunLocalOAuthListener(int port, const std::string &expected_state,
                                    const std::function<void()> &on_listening, int max_attempts,
-                                   const std::function<bool()> &is_interrupted) {
+                                   const std::function<bool()> &is_interrupted,
+                                   const std::function<bool(std::string &)> &try_read_pasted_input) {
 	if (!InitSockets()) {
 		throw IOException("Failed to initialize sockets");
 	}
@@ -307,6 +401,24 @@ std::string RunLocalOAuthListener(int port, const std::string &expected_state,
 			close_listeners();
 			CleanupSockets();
 			throw InterruptException();
+		}
+		if (try_read_pasted_input) {
+			std::string pasted_line;
+			if (try_read_pasted_input(pasted_line)) {
+				try {
+					std::string token = ExtractPastedToken(pasted_line, expected_state);
+					close_listeners();
+					CleanupSockets();
+					return token;
+				} catch (const Exception &e) {
+					// Not a usable paste (wrong/missing state, no token
+					// found) - keep waiting for either a corrected paste or
+					// the real browser redirect, same as an HTTP callback
+					// that fails ParseTokenPayload below.
+					std::cerr << "Ignoring pasted input: " << e.what() << '\n';
+					continue;
+				}
+			}
 		}
 		socket_t ready_fd = WaitForConnection(server_fd_v4, server_fd_v6, ACCEPT_POLL_SECONDS);
 		if (ready_fd == INVALID_SOCKET_VALUE) {

@@ -179,6 +179,9 @@ std::string InitiateOAuthFlow(ClientContext &context) {
 		std::cout << auth_request_url << '\n';
 		std::cout << "(This will time out after " << (sheets::kOAuthListenerTimeoutSeconds / 60)
 		           << " minutes if login isn't completed.)" << '\n';
+		std::cout << '\n'
+		           << "Alternatively, after logging in, paste the redirect URL (or just its access_token) "
+		           << "here and press Enter:" << '\n';
 	};
 
 	// Lets Ctrl+C cancel a pending login instead of blocking the CLI until
@@ -186,7 +189,19 @@ std::string InitiateOAuthFlow(ClientContext &context) {
 	// accept loop never yields back to DuckDB's own interrupt/EOF handling.
 	auto is_interrupted = [&context]() { return context.IsInterrupted(); };
 
-	return sheets::RunLocalOAuthListener(PORT, state, open_browser, /*max_attempts=*/20, is_interrupted);
+	// Lets a token be pasted in as an alternative to the local listener
+	// actually receiving the browser's redirect - the only way to complete
+	// this flow when DuckDB runs on a remote/headless host, since the
+	// redirect URI is always a loopback address the user's own browser can't
+	// reach back into over the network. TryReadPastedLine is non-blocking,
+	// so this is polled from the same loop that services the listener
+	// socket(s) instead of needing a separate thread that could otherwise
+	// linger reading stdin - and race the DuckDB CLI's own prompt for it -
+	// after this call returns.
+	auto try_read_pasted_input = [](std::string &line) { return sheets::TryReadPastedLine(line); };
+
+	return sheets::RunLocalOAuthListener(PORT, state, open_browser, /*max_attempts=*/20, is_interrupted,
+	                                      try_read_pasted_input);
 }
 
 } // namespace duckdb

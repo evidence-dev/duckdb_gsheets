@@ -83,6 +83,52 @@ TEST_CASE("ParseTokenPayload throws when the token is empty", "[oauth_listener]"
 }
 
 // =============================================================================
+// ExtractPastedToken Tests
+// =============================================================================
+
+TEST_CASE("ExtractPastedToken accepts a bare token with no query string", "[oauth_listener]") {
+	REQUIRE(ExtractPastedToken("ya29.bare-token-value", "abc123") == "ya29.bare-token-value");
+}
+
+TEST_CASE("ExtractPastedToken trims surrounding whitespace from a bare token", "[oauth_listener]") {
+	REQUIRE(ExtractPastedToken("  ya29.bare-token-value \r\n", "abc123") == "ya29.bare-token-value");
+}
+
+TEST_CASE("ExtractPastedToken extracts the token from a full redirect URL", "[oauth_listener]") {
+	std::string pasted = "http://localhost:8765/#access_token=ya29.from-url&token_type=Bearer&expires_in=3599&"
+	                      "scope=https://www.googleapis.com/auth/spreadsheets&state=abc123";
+	REQUIRE(ExtractPastedToken(pasted, "abc123") == "ya29.from-url");
+}
+
+TEST_CASE("ExtractPastedToken extracts the token when it's the only query param", "[oauth_listener]") {
+	REQUIRE(ExtractPastedToken("access_token=ya29.only-param&state=abc123", "abc123") == "ya29.only-param");
+}
+
+TEST_CASE("ExtractPastedToken throws on state mismatch", "[oauth_listener]") {
+	REQUIRE_THROWS_AS(ExtractPastedToken("access_token=forged&state=wrong-state", "abc123"), duckdb::IOException);
+}
+
+TEST_CASE("ExtractPastedToken accepts a query string with no state param", "[oauth_listener]") {
+	REQUIRE(ExtractPastedToken("access_token=ya29.no-state", "abc123") == "ya29.no-state");
+}
+
+TEST_CASE("ExtractPastedToken throws when access_token has no value", "[oauth_listener]") {
+	REQUIRE_THROWS_AS(ExtractPastedToken("access_token=&state=abc123", "abc123"), duckdb::IOException);
+}
+
+TEST_CASE("ExtractPastedToken throws on empty input", "[oauth_listener]") {
+	REQUIRE_THROWS_AS(ExtractPastedToken("", "abc123"), duckdb::IOException);
+	REQUIRE_THROWS_AS(ExtractPastedToken("   \r\n", "abc123"), duckdb::IOException);
+}
+
+TEST_CASE("ExtractPastedToken ignores a param name that only ends with access_token", "[oauth_listener]") {
+	// "some_access_token=" doesn't start at a param boundary, so it must not
+	// be mistaken for the real "access_token=" param.
+	std::string pasted = "some_access_token=decoy&access_token=ya29.real&state=abc123";
+	REQUIRE(ExtractPastedToken(pasted, "abc123") == "ya29.real");
+}
+
+// =============================================================================
 // RunLocalOAuthListener Integration Tests
 // =============================================================================
 // Plays the role of the browser: connects over a real loopback TCP socket and
@@ -382,6 +428,90 @@ TEST_CASE("RunLocalOAuthListener throws after exhausting its attempt budget", "[
 	CleanupSockets();
 
 	REQUIRE(threw);
+}
+
+TEST_CASE("RunLocalOAuthListener returns a token supplied via try_read_pasted_input", "[oauth_listener][integration]") {
+	// Simulates the remote-host scenario: the browser's redirect never
+	// reaches the listener, but the user pastes the token back manually.
+	InitSockets();
+	const int port = TEST_PORT_BASE + 6;
+	const std::string state = "paste-test-state";
+
+	std::atomic<bool> listening {false};
+	std::atomic<bool> paste_offered {false};
+	std::string result;
+	std::exception_ptr thread_exception;
+
+	auto try_read_pasted_input = [&](std::string &line) {
+		if (paste_offered.exchange(true)) {
+			return false; // Only offer the paste once.
+		}
+		line = "http://localhost:1/#access_token=ya29.pasted-token&state=" + state;
+		return true;
+	};
+
+	AutoJoinThread server_thread([&]() {
+		try {
+			result = RunLocalOAuthListener(
+			    port, state, [&]() { listening = true; }, /*max_attempts=*/20,
+			    /*is_interrupted=*/nullptr, try_read_pasted_input);
+		} catch (...) {
+			thread_exception = std::current_exception();
+		}
+	});
+
+	REQUIRE(WaitUntil(listening));
+	server_thread.join();
+	CleanupSockets();
+
+	if (thread_exception) {
+		std::rethrow_exception(thread_exception);
+	}
+	REQUIRE(result == "ya29.pasted-token");
+}
+
+TEST_CASE("RunLocalOAuthListener ignores an invalid paste and still accepts the real browser callback",
+          "[oauth_listener][integration]") {
+	InitSockets();
+	const int port = TEST_PORT_BASE + 7;
+	const std::string state = "paste-fallback-state";
+
+	std::atomic<bool> listening {false};
+	std::atomic<bool> paste_offered {false};
+	std::string result;
+	std::exception_ptr thread_exception;
+
+	auto try_read_pasted_input = [&](std::string &line) {
+		if (paste_offered.exchange(true)) {
+			return false; // Only offer the (bad) paste once.
+		}
+		line = "access_token=forged&state=wrong-state";
+		return true;
+	};
+
+	AutoJoinThread server_thread([&]() {
+		try {
+			result = RunLocalOAuthListener(
+			    port, state, [&]() { listening = true; }, /*max_attempts=*/20,
+			    /*is_interrupted=*/nullptr, try_read_pasted_input);
+		} catch (...) {
+			thread_exception = std::current_exception();
+		}
+	});
+
+	REQUIRE(WaitUntil(listening));
+	REQUIRE(WaitUntil(paste_offered));
+
+	const std::string real_token = "ya29.real-after-bad-paste";
+	SendGetThenPost(port, "state=" + state + "&access_token=" + real_token);
+
+	server_thread.join();
+	CleanupSockets();
+
+	if (thread_exception) {
+		std::rethrow_exception(thread_exception);
+	}
+	REQUIRE(result == real_token);
 }
 
 TEST_CASE("RunLocalOAuthListener throws InterruptException promptly when is_interrupted becomes true",
