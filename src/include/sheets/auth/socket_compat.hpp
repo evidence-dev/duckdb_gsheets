@@ -7,6 +7,13 @@
 // production OAuth listener and its unit/integration tests.
 
 #ifdef _WIN32
+// Without this, <winsock2.h>'s transitive <windows.h> defines max/min as
+// function-like macros, which breaks any std::max/std::min call textually
+// (e.g. in oauth_listener.cpp) in any translation unit that includes this
+// header.
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #pragma comment(lib, "ws2_32.lib")
