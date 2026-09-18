@@ -1,5 +1,7 @@
 #include "sheets/auth/oauth_listener.hpp"
 
+#include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cstdint>
 #include <cstring>
@@ -24,19 +26,159 @@ bool StartsWith(const std::string &s, const std::string &prefix) {
 	return s.compare(0, prefix.size(), prefix) == 0;
 }
 
-// Waits up to `timeout_seconds` for `server_fd` to have an incoming
-// connection ready to accept(). Returns false on timeout so the caller can
-// re-check the overall deadline instead of blocking indefinitely.
-bool WaitForConnection(socket_t server_fd, int timeout_seconds) {
+// A single recv() isn't guaranteed to return a whole HTTP request: some
+// clients (observed with Safari's fetch()) write the headers and body as
+// separate TCP writes, so the headers can arrive first with the body still
+// in flight. This keeps reading - first until the header/body separator is
+// found, then until at least as many body bytes as Content-Length declares
+// have arrived - instead of silently treating a not-yet-arrived body as
+// empty. Bounded by MAX_REQUEST_SIZE so a connection that never completes a
+// request can't grow this buffer without limit.
+std::string ReadHttpRequest(socket_t client_socket) {
+	constexpr size_t MAX_REQUEST_SIZE = 65536;
+	std::string request;
+	char buffer[BUFFER_SIZE];
+
+	size_t header_end = std::string::npos;
+	size_t content_length = 0;
+
+	while (request.size() < MAX_REQUEST_SIZE) {
+		int bytes_read = SocketRecv(client_socket, buffer, static_cast<int>(sizeof(buffer)));
+		if (bytes_read <= 0) {
+			break;
+		}
+		request.append(buffer, static_cast<size_t>(bytes_read));
+
+		if (header_end == std::string::npos) {
+			header_end = request.find("\r\n\r\n");
+			if (header_end == std::string::npos) {
+				continue;
+			}
+			std::string headers = request.substr(0, header_end);
+			std::transform(headers.begin(), headers.end(), headers.begin(),
+			                [](unsigned char c) { return std::tolower(c); });
+			size_t cl_pos = headers.find("content-length:");
+			if (cl_pos != std::string::npos) {
+				try {
+					content_length = static_cast<size_t>(std::stoul(headers.substr(cl_pos + 15)));
+				} catch (const std::exception &) {
+					// Malformed Content-Length value - treat as no body left
+					// to wait for; ParseTokenPayload will reject the
+					// (already malformed) request downstream as usual.
+				}
+			}
+		}
+
+		size_t body_so_far = request.size() - (header_end + 4);
+		if (body_so_far >= content_length) {
+			break;
+		}
+	}
+
+	return request;
+}
+
+// Waits up to `timeout_seconds` for either `fd_a` or `fd_b` (either may be
+// INVALID_SOCKET_VALUE if that socket wasn't created) to have an incoming
+// connection ready to accept(). Returns whichever fd is ready, or
+// INVALID_SOCKET_VALUE on timeout, so the caller can re-check the overall
+// deadline instead of blocking indefinitely.
+socket_t WaitForConnection(socket_t fd_a, socket_t fd_b, int timeout_seconds) {
 	fd_set read_fds;
 	FD_ZERO(&read_fds);
-	FD_SET(server_fd, &read_fds);
+
+	int max_fd = -1;
+	if (fd_a != INVALID_SOCKET_VALUE) {
+		FD_SET(fd_a, &read_fds);
+		max_fd = std::max(max_fd, static_cast<int>(fd_a));
+	}
+	if (fd_b != INVALID_SOCKET_VALUE) {
+		FD_SET(fd_b, &read_fds);
+		max_fd = std::max(max_fd, static_cast<int>(fd_b));
+	}
+	if (max_fd < 0) {
+		return INVALID_SOCKET_VALUE;
+	}
 
 	struct timeval tv;
 	tv.tv_sec = timeout_seconds;
 	tv.tv_usec = 0;
 
-	return select(static_cast<int>(server_fd) + 1, &read_fds, nullptr, nullptr, &tv) > 0;
+	if (select(max_fd + 1, &read_fds, nullptr, nullptr, &tv) <= 0) {
+		return INVALID_SOCKET_VALUE;
+	}
+	if (fd_a != INVALID_SOCKET_VALUE && FD_ISSET(fd_a, &read_fds)) {
+		return fd_a;
+	}
+	if (fd_b != INVALID_SOCKET_VALUE && FD_ISSET(fd_b, &read_fds)) {
+		return fd_b;
+	}
+	return INVALID_SOCKET_VALUE;
+}
+
+// Creates, binds (to the loopback address for `family`) and listens on a
+// socket for the OAuth callback. `family` is AF_INET or AF_INET6.
+//
+// macOS Safari resolves "localhost" to the IPv6 loopback address (::1)
+// ahead of 127.0.0.1 and, unlike Chromium/Firefox, doesn't reliably fall
+// back to IPv4 when nothing answers there - so an IPv4-only listener made
+// the whole login flow silently fail in Safari even though the redirect
+// URI ("http://localhost:<port>") worked fine in other browsers. Listening
+// on both families sidesteps that without touching the redirect URI (which
+// must stay in sync with what's registered for the OAuth client).
+//
+// IPv6 support is best-effort: if creating/binding the IPv6 socket fails
+// (disabled at the OS level, sandboxed environment, etc.) this returns
+// INVALID_SOCKET_VALUE rather than throwing, and the caller proceeds with
+// IPv4 only, matching prior behavior.
+socket_t CreateLoopbackListener(int family, int port, bool required) {
+	socket_t fd = socket(family, SOCK_STREAM, 0);
+	if (fd == INVALID_SOCKET_VALUE) {
+		if (required) {
+			throw IOException("Failed to create socket");
+		}
+		return INVALID_SOCKET_VALUE;
+	}
+
+	int opt = 1;
+	setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char *>(&opt), sizeof(opt));
+	if (family == AF_INET6) {
+		// Without this, some platforms (Linux) let the IPv6 socket also
+		// accept IPv4 connections, which would collide with the separate
+		// IPv4 socket bound to the same port.
+		setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, reinterpret_cast<const char *>(&opt), sizeof(opt));
+	}
+
+	bool bound = false;
+	if (family == AF_INET) {
+		struct sockaddr_in address;
+		std::memset(&address, 0, sizeof(address));
+		address.sin_family = AF_INET;
+		address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+		address.sin_port = htons(static_cast<uint16_t>(port));
+		bound = bind(fd, reinterpret_cast<struct sockaddr *>(&address), sizeof(address)) == 0;
+	} else {
+		struct sockaddr_in6 address;
+		std::memset(&address, 0, sizeof(address));
+		address.sin6_family = AF_INET6;
+		address.sin6_addr = in6addr_loopback;
+		address.sin6_port = htons(static_cast<uint16_t>(port));
+		bound = bind(fd, reinterpret_cast<struct sockaddr *>(&address), sizeof(address)) == 0;
+	}
+
+	// Backlog > 1: browsers (Safari in particular) fire off several extra
+	// same-origin requests right after loading the redirect page - favicon
+	// and Apple touch-icon probes were observed racing the real POST here -
+	// so a backlog of 1 risked the kernel refusing the real callback's
+	// connection outright if it arrived while one of those was still queued.
+	if (!bound || listen(fd, 8) < 0) {
+		CloseSocket(fd);
+		if (required) {
+			throw IOException("Failed to bind to port " + std::to_string(port));
+		}
+		return INVALID_SOCKET_VALUE;
+	}
+	return fd;
 }
 
 void SendResponse(socket_t client_socket, const std::string &response) {
@@ -124,38 +266,18 @@ std::string RunLocalOAuthListener(int port, const std::string &expected_state,
 		throw IOException("Failed to initialize sockets");
 	}
 
-	socket_t server_fd = socket(AF_INET, SOCK_STREAM, 0);
-	if (server_fd == INVALID_SOCKET_VALUE) {
+	// Bind to loopback only - 127.0.0.1 and, best-effort, ::1 - not all
+	// interfaces, so this listener is never reachable from other machines on
+	// the network. IPv4 is required; see CreateLoopbackListener for why IPv6
+	// is also attempted.
+	socket_t server_fd_v4;
+	try {
+		server_fd_v4 = CreateLoopbackListener(AF_INET, port, /*required=*/true);
+	} catch (...) {
 		CleanupSockets();
-		throw IOException("Failed to create socket");
+		throw;
 	}
-
-	int opt = 1;
-	if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char *>(&opt), sizeof(opt)) < 0) {
-		CloseSocket(server_fd);
-		CleanupSockets();
-		throw IOException("Failed to set socket options");
-	}
-
-	// Bind to loopback only (127.0.0.1), not all interfaces - this listener
-	// must not be reachable from other machines on the network.
-	struct sockaddr_in address;
-	std::memset(&address, 0, sizeof(address));
-	address.sin_family = AF_INET;
-	address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-	address.sin_port = htons(static_cast<uint16_t>(port));
-
-	if (bind(server_fd, (struct sockaddr *)&address, sizeof(address)) < 0) {
-		CloseSocket(server_fd);
-		CleanupSockets();
-		throw IOException("Failed to bind to port " + std::to_string(port));
-	}
-
-	if (listen(server_fd, 1) < 0) {
-		CloseSocket(server_fd);
-		CleanupSockets();
-		throw IOException("Failed to listen on socket");
-	}
+	socket_t server_fd_v6 = CreateLoopbackListener(AF_INET6, port, /*required=*/false);
 
 	if (on_listening) {
 		on_listening();
@@ -168,25 +290,31 @@ std::string RunLocalOAuthListener(int port, const std::string &expected_state,
 	// ignoring anything else, up to a bounded number of attempts - and never
 	// longer than kOAuthListenerTimeoutSeconds wall-clock, even if no one ever
 	// connects at all.
+	auto close_listeners = [&]() {
+		CloseSocket(server_fd_v4);
+		if (server_fd_v6 != INVALID_SOCKET_VALUE) {
+			CloseSocket(server_fd_v6);
+		}
+	};
+
 	auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(kOAuthListenerTimeoutSeconds);
 	for (int attempt = 0; attempt < max_attempts;) {
 		if (std::chrono::steady_clock::now() >= deadline) {
 			break;
 		}
-		if (!WaitForConnection(server_fd, ACCEPT_POLL_SECONDS)) {
+		socket_t ready_fd = WaitForConnection(server_fd_v4, server_fd_v6, ACCEPT_POLL_SECONDS);
+		if (ready_fd == INVALID_SOCKET_VALUE) {
 			continue;
 		}
 
-		socket_t client_socket = accept(server_fd, nullptr, nullptr);
+		socket_t client_socket = accept(ready_fd, nullptr, nullptr);
 		if (client_socket == INVALID_SOCKET_VALUE) {
 			attempt++;
 			continue;
 		}
 		attempt++;
 
-		char buffer[BUFFER_SIZE];
-		int bytes_read = SocketRecv(client_socket, buffer, static_cast<int>(sizeof(buffer)));
-		std::string request(buffer, bytes_read > 0 ? static_cast<size_t>(bytes_read) : 0);
+		std::string request = ReadHttpRequest(client_socket);
 
 		bool is_post = StartsWith(request, "POST ");
 		SendResponse(client_socket, is_post ? BuildAckResponse() : BuildRedirectPageResponse());
@@ -198,7 +326,7 @@ std::string RunLocalOAuthListener(int port, const std::string &expected_state,
 
 		try {
 			std::string token = ParseTokenPayload(ExtractHttpBody(request), expected_state);
-			CloseSocket(server_fd);
+			close_listeners();
 			CleanupSockets();
 			return token;
 		} catch (const Exception &) {
@@ -208,7 +336,7 @@ std::string RunLocalOAuthListener(int port, const std::string &expected_state,
 		}
 	}
 
-	CloseSocket(server_fd);
+	close_listeners();
 	CleanupSockets();
 	throw IOException("Timed out waiting for a valid OAuth callback");
 }

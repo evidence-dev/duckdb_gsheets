@@ -97,22 +97,36 @@ namespace {
 // local dev instance of the extension can't collide with the test.
 constexpr int TEST_PORT_BASE = 18765;
 
-bool ConnectToLoopback(int port, socket_t &out_socket) {
-	socket_t sock = socket(AF_INET, SOCK_STREAM, 0);
+// `family` is AF_INET (127.0.0.1) or AF_INET6 (::1) - the latter is used to
+// exercise the IPv6 listener socket the same way macOS Safari's preference
+// for resolving "localhost" to ::1 does in production.
+bool ConnectToLoopback(int port, socket_t &out_socket, int family = AF_INET) {
+	socket_t sock = socket(family, SOCK_STREAM, 0);
 	if (sock == INVALID_SOCKET_VALUE) {
 		return false;
 	}
 
-	struct sockaddr_in address;
+	struct sockaddr_storage address;
 	std::memset(&address, 0, sizeof(address));
-	address.sin_family = AF_INET;
-	address.sin_port = htons(static_cast<uint16_t>(port));
-	inet_pton(AF_INET, "127.0.0.1", &address.sin_addr);
+	socklen_t address_len;
+	if (family == AF_INET) {
+		auto *addr4 = reinterpret_cast<struct sockaddr_in *>(&address);
+		addr4->sin_family = AF_INET;
+		addr4->sin_port = htons(static_cast<uint16_t>(port));
+		inet_pton(AF_INET, "127.0.0.1", &addr4->sin_addr);
+		address_len = sizeof(struct sockaddr_in);
+	} else {
+		auto *addr6 = reinterpret_cast<struct sockaddr_in6 *>(&address);
+		addr6->sin6_family = AF_INET6;
+		addr6->sin6_port = htons(static_cast<uint16_t>(port));
+		addr6->sin6_addr = in6addr_loopback;
+		address_len = sizeof(struct sockaddr_in6);
+	}
 
 	// on_listening fires right after listen() succeeds, so this should
 	// connect on the first try; retry briefly to absorb scheduling jitter.
 	for (int attempt = 0; attempt < 50; attempt++) {
-		if (connect(sock, (struct sockaddr *)&address, sizeof(address)) == 0) {
+		if (connect(sock, reinterpret_cast<struct sockaddr *>(&address), address_len) == 0) {
 			out_socket = sock;
 			return true;
 		}
@@ -158,9 +172,9 @@ private:
 // Sends a GET (simulating the OAuth redirect landing) then a POST with the
 // given body (simulating the redirect page's JS posting back what it parsed
 // out of the URL fragment), draining each response.
-void SendGetThenPost(int port, const std::string &post_body) {
+void SendGetThenPost(int port, const std::string &post_body, int family = AF_INET) {
 	socket_t get_socket;
-	REQUIRE(ConnectToLoopback(port, get_socket));
+	REQUIRE(ConnectToLoopback(port, get_socket, family));
 	std::string get_request = "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n";
 	SocketSend(get_socket, get_request.c_str(), static_cast<int>(get_request.length()));
 	char get_response[4096] = {0};
@@ -168,10 +182,28 @@ void SendGetThenPost(int port, const std::string &post_body) {
 	CloseSocket(get_socket);
 
 	socket_t post_socket;
-	REQUIRE(ConnectToLoopback(port, post_socket));
+	REQUIRE(ConnectToLoopback(port, post_socket, family));
 	std::string post_request = "POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: " +
 	                            std::to_string(post_body.length()) + "\r\n\r\n" + post_body;
 	SocketSend(post_socket, post_request.c_str(), static_cast<int>(post_request.length()));
+	char post_response[4096] = {0};
+	SocketRecv(post_socket, post_response, sizeof(post_response) - 1);
+	CloseSocket(post_socket);
+}
+
+// Like the POST half of SendGetThenPost, but writes the headers and body as
+// two separate send() calls with a short pause in between - reproducing
+// what Safari's fetch() was observed to do on the wire (see ReadHttpRequest
+// in oauth_listener.cpp), where a single recv() on the server only picks up
+// the headers and the body arrives a moment later on its own.
+void SendPostSplitAcrossWrites(int port, const std::string &post_body, int family = AF_INET) {
+	socket_t post_socket;
+	REQUIRE(ConnectToLoopback(port, post_socket, family));
+	std::string headers = "POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: " +
+	                       std::to_string(post_body.length()) + "\r\n\r\n";
+	SocketSend(post_socket, headers.c_str(), static_cast<int>(headers.length()));
+	std::this_thread::sleep_for(std::chrono::milliseconds(100));
+	SocketSend(post_socket, post_body.c_str(), static_cast<int>(post_body.length()));
 	char post_response[4096] = {0};
 	SocketRecv(post_socket, post_response, sizeof(post_response) - 1);
 	CloseSocket(post_socket);
@@ -201,6 +233,81 @@ TEST_CASE("RunLocalOAuthListener returns the token posted with the matching stat
 
 	const std::string fake_token = "ya29.fake-integration-test-token";
 	SendGetThenPost(port, "state=" + state + "&access_token=" + fake_token);
+
+	server_thread.join();
+	CleanupSockets();
+
+	if (thread_exception) {
+		std::rethrow_exception(thread_exception);
+	}
+	REQUIRE(result == fake_token);
+}
+
+TEST_CASE("RunLocalOAuthListener accepts the callback over IPv6 (::1)", "[oauth_listener][integration]") {
+	// macOS Safari resolves "localhost" to the IPv6 loopback address (::1)
+	// ahead of 127.0.0.1; the listener must accept connections there too or
+	// the login flow silently fails in Safari even though it works in
+	// browsers that fall back to IPv4 (see CreateLoopbackListener).
+	InitSockets();
+	const int port = TEST_PORT_BASE + 3;
+	const std::string state = "ipv6-test-state";
+
+	std::atomic<bool> listening {false};
+	std::string result;
+	std::exception_ptr thread_exception;
+
+	AutoJoinThread server_thread([&]() {
+		try {
+			result = RunLocalOAuthListener(port, state, [&]() { listening = true; });
+		} catch (...) {
+			thread_exception = std::current_exception();
+		}
+	});
+
+	REQUIRE(WaitUntil(listening));
+
+	const std::string fake_token = "ya29.fake-ipv6-token";
+	SendGetThenPost(port, "state=" + state + "&access_token=" + fake_token, AF_INET6);
+
+	server_thread.join();
+	CleanupSockets();
+
+	if (thread_exception) {
+		std::rethrow_exception(thread_exception);
+	}
+	REQUIRE(result == fake_token);
+}
+
+TEST_CASE("RunLocalOAuthListener assembles a POST whose body arrives in a separate TCP write",
+          "[oauth_listener][integration]") {
+	// This is the actual root cause behind the real-world Safari bug: Safari's
+	// fetch() was observed sending the POST's headers and body as two
+	// separate writes, arriving as two separate recv()s on the server. A
+	// naive single-recv() read (the previous implementation) would see a
+	// complete set of headers ending in the blank line and treat that as the
+	// whole request, silently getting an empty body and rejecting the real
+	// token forever. ReadHttpRequest must keep reading per Content-Length
+	// instead of assuming one recv() has everything.
+	InitSockets();
+	const int port = TEST_PORT_BASE + 4;
+	const std::string state = "split-write-state";
+
+	std::atomic<bool> listening {false};
+	std::string result;
+	std::exception_ptr thread_exception;
+
+	AutoJoinThread server_thread([&]() {
+		try {
+			result = RunLocalOAuthListener(port, state, [&]() { listening = true; });
+		} catch (...) {
+			thread_exception = std::current_exception();
+		}
+	});
+
+	REQUIRE(WaitUntil(listening));
+
+	const std::string fake_token = "ya29.fake-split-write-token";
+	SendPostSplitAcrossWrites(port, "state=" + state + "&access_token=" + fake_token);
 
 	server_thread.join();
 	CleanupSockets();
