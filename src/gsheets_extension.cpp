@@ -34,12 +34,12 @@ unique_ptr<TableRef> ReadSheetReplacement(ClientContext &context, ReplacementSca
 	}
 	auto table_function = make_uniq<TableFunctionRef>();
 	vector<unique_ptr<ParsedExpression>> children;
-	children.push_back(make_uniq<ConstantExpression>(Value(table_name)));
+	children.push_back(ConstantExpression::FromValue(Value(table_name)));
 	table_function->function = make_uniq<FunctionExpression>("read_gsheet", std::move(children));
 
 	if (!FileSystem::HasGlob(table_name)) {
 		auto &fs = FileSystem::GetFileSystem(context);
-		table_function->alias = fs.ExtractBaseName(table_name);
+		table_function->alias = Identifier(fs.ExtractBaseName(table_name));
 	}
 
 	return std::move(table_function);

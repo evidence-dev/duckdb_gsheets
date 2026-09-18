@@ -58,7 +58,8 @@ public:
 	GSheetCopyFunction();
 
 	static unique_ptr<FunctionData> GSheetWriteBind(ClientContext &context, CopyFunctionBindInput &input,
-	                                                const vector<string> &names, const vector<LogicalType> &sql_types);
+	                                                const vector<Identifier> &names,
+	                                                const vector<LogicalType> &sql_types);
 
 	static unique_ptr<GlobalFunctionData> GSheetWriteInitializeGlobal(ClientContext &context, FunctionData &bind_data,
 	                                                                  const string &file_path);

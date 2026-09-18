@@ -37,7 +37,7 @@ jobs:
     name: Build extension binaries
     uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@main
     with:
-      duckdb_version: v1.5.5
+      duckdb_version: v2.0-cyanoptera
       ci_tools_version: main
       extension_name: gsheets
       exclude_archs: "windows_amd64_rtools"
