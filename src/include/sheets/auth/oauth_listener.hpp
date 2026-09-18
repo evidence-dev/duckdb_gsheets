@@ -46,8 +46,17 @@ std::string ParseTokenPayload(const std::string &body, const std::string &expect
 // fixed wall-clock deadline regardless of `max_attempts`, so a browser that
 // never completes the redirect (headless environment, abandoned flow, etc.)
 // can't leave the caller blocked forever.
+//
+// `is_interrupted`, if set, is polled about once a second (whenever the
+// accept-loop's connection wait times out) - production code wires this to
+// ClientContext::IsInterrupted() so Ctrl+C can actually cancel a pending
+// login instead of the whole CLI appearing to hang until the 5-minute
+// timeout, since this call otherwise blocks the query-execution thread
+// without ever yielding back to DuckDB's normal cancellation/EOF handling.
+// Throws InterruptException as soon as it's observed set.
 std::string RunLocalOAuthListener(int port, const std::string &expected_state,
-                                   const std::function<void()> &on_listening = nullptr, int max_attempts = 20);
+                                   const std::function<void()> &on_listening = nullptr, int max_attempts = 20,
+                                   const std::function<bool()> &is_interrupted = nullptr);
 
 } // namespace sheets
 } // namespace duckdb

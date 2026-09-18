@@ -383,3 +383,39 @@ TEST_CASE("RunLocalOAuthListener throws after exhausting its attempt budget", "[
 
 	REQUIRE(threw);
 }
+
+TEST_CASE("RunLocalOAuthListener throws InterruptException promptly when is_interrupted becomes true",
+          "[oauth_listener][integration]") {
+	// Production wires this to ClientContext::IsInterrupted() so Ctrl+C can
+	// cancel a pending login - without checking it, the accept loop only
+	// gives up after the full 5-minute timeout, which looks like DuckDB
+	// hanging (Ctrl+C, and Ctrl+D since the CLI never gets back to its own
+	// read loop, both appear to do nothing).
+	InitSockets();
+	const int port = TEST_PORT_BASE + 5;
+	const std::string state = "interrupt-test-state";
+
+	std::atomic<bool> listening {false};
+	std::atomic<bool> interrupted {false};
+	bool threw_interrupt = false;
+
+	AutoJoinThread server_thread([&]() {
+		try {
+			RunLocalOAuthListener(
+			    port, state, [&]() { listening = true; }, /*max_attempts=*/20, [&]() { return interrupted.load(); });
+		} catch (const duckdb::InterruptException &) {
+			threw_interrupt = true;
+		} catch (const std::exception &) {
+			// Wrong exception type - leave threw_interrupt false so the
+			// REQUIRE below reports the mismatch.
+		}
+	});
+
+	REQUIRE(WaitUntil(listening));
+	interrupted = true;
+
+	server_thread.join();
+	CleanupSockets();
+
+	REQUIRE(threw_interrupt);
+}

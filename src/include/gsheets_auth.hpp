@@ -4,7 +4,9 @@
 
 namespace duckdb {
 
-std::string InitiateOAuthFlow();
+class ClientContext;
+
+std::string InitiateOAuthFlow(ClientContext &context);
 
 struct CreateGsheetSecretFunctions {
 public:

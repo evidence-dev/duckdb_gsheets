@@ -261,7 +261,8 @@ std::string ParseTokenPayload(const std::string &body, const std::string &expect
 }
 
 std::string RunLocalOAuthListener(int port, const std::string &expected_state,
-                                   const std::function<void()> &on_listening, int max_attempts) {
+                                   const std::function<void()> &on_listening, int max_attempts,
+                                   const std::function<bool()> &is_interrupted) {
 	if (!InitSockets()) {
 		throw IOException("Failed to initialize sockets");
 	}
@@ -301,6 +302,11 @@ std::string RunLocalOAuthListener(int port, const std::string &expected_state,
 	for (int attempt = 0; attempt < max_attempts;) {
 		if (std::chrono::steady_clock::now() >= deadline) {
 			break;
+		}
+		if (is_interrupted && is_interrupted()) {
+			close_listeners();
+			CleanupSockets();
+			throw InterruptException();
 		}
 		socket_t ready_fd = WaitForConnection(server_fd_v4, server_fd_v6, ACCEPT_POLL_SECONDS);
 		if (ready_fd == INVALID_SOCKET_VALUE) {

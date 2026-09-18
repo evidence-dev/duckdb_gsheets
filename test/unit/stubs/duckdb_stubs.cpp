@@ -25,4 +25,7 @@ IOException::IOException(const unordered_map<string, string> &extra_info, const 
     : Exception(extra_info, ExceptionType::IO, msg) {
 }
 
+InterruptException::InterruptException() : Exception(ExceptionType::INTERRUPT, INTERRUPT_MESSAGE) {
+}
+
 } // namespace duckdb

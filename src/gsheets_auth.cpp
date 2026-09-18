@@ -54,7 +54,7 @@ static unique_ptr<BaseSecret> CreateGsheetSecretFromOAuth(ClientContext &context
 	auto result = make_uniq<KeyValueSecret>(scope, input.type, input.provider, input.name);
 
 	// Initiate OAuth flow
-	string token = InitiateOAuthFlow();
+	string token = InitiateOAuthFlow(context);
 
 	result->secret_map["token"] = token;
 
@@ -139,7 +139,7 @@ void CreateGsheetSecretFunctions::Register(ExtensionLoader &loader) {
 	loader.RegisterFunction(key_file_function);
 }
 
-std::string InitiateOAuthFlow() {
+std::string InitiateOAuthFlow(ClientContext &context) {
 	// Runs a short-lived local HTTP listener so the OAuth redirect can hand back
 	// the access token automatically, without the user having to copy/paste it.
 	const int PORT = 8765;
@@ -181,7 +181,12 @@ std::string InitiateOAuthFlow() {
 		           << " minutes if login isn't completed.)" << '\n';
 	};
 
-	return sheets::RunLocalOAuthListener(PORT, state, open_browser);
+	// Lets Ctrl+C cancel a pending login instead of blocking the CLI until
+	// the 5-minute timeout: without this, RunLocalOAuthListener's blocking
+	// accept loop never yields back to DuckDB's own interrupt/EOF handling.
+	auto is_interrupted = [&context]() { return context.IsInterrupted(); };
+
+	return sheets::RunLocalOAuthListener(PORT, state, open_browser, /*max_attempts=*/20, is_interrupted);
 }
 
 } // namespace duckdb
