@@ -22,8 +22,13 @@ jobs:
     secrets:
       GSHEETS_KEY_FILE_JSON: ${{ secrets.GSHEETS_KEY_FILE_JSON }}
 
+  oauth-listener-tests:
+    name: OAuth Listener Tests
+    needs: unit-tests
+    uses: ./.github/workflows/OAuthListenerTests.yml
+
   duckdb-next-build:
-    needs: sql-tests
+    needs: [sql-tests, oauth-listener-tests]
     name: Build extension binaries
     uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@main
     with:
@@ -33,7 +38,7 @@ jobs:
       exclude_archs: "windows_amd64_rtools"
 
   duckdb-stable-build:
-    needs: sql-tests
+    needs: [sql-tests, oauth-listener-tests]
     name: Build extension binaries
     uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@main
     with:

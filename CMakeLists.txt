@@ -62,10 +62,20 @@ endif()
 # The local OAuth listener (src/sheets/auth/oauth_listener.cpp) uses the
 # vendored httplib::Server, which uses Winsock on Windows. httplib.hpp's
 # #pragma comment(lib, "ws2_32.lib") only takes effect for MSVC, so link
-# ws2_32 explicitly here for other toolchains (e.g. MinGW/Ninja generators).
+# ws2_32 explicitly here for other toolchains (e.g. MinGW/Ninja generators),
+# matching test/integration/CMakeLists.txt.
 if(WIN32)
   target_link_libraries(${EXTENSION_NAME} ws2_32)
   target_link_libraries(${LOADABLE_EXTENSION_NAME} ws2_32)
+endif()
+
+# oauth_listener.cpp's Catch2 tests (test/unit/sheets/auth/test_oauth_listener.cpp)
+# can't link into the standalone test/unit target (see its CMakeLists.txt),
+# so they're built here instead, as part of the full extension build - same
+# condition DuckDB itself uses to decide whether to build its own unittest
+# runner.
+if(${BUILD_UNITTESTS})
+  add_subdirectory(test/integration)
 endif()
 
 install(

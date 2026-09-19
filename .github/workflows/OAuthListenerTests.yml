@@ -1,0 +1,36 @@
+name: OAuth Listener Tests
+
+on:
+  workflow_call:
+
+concurrency:
+  group: oauth-listener-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  oauth-listener-tests:
+    name: Run OAuth listener tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: a1a1cbc975abf909a6c8985a6a2b8fe20bbd9bd6
+
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y ninja-build libssl-dev ccache
+
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@main
+        with:
+          key: ccache-oauth-listener-tests
+
+      - name: Build and run OAuth listener tests
+        run: make test_oauth_listener
+        env:
+          GEN: ninja
+          EXT_FLAGS: -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
