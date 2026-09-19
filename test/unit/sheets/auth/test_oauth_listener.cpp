@@ -225,6 +225,23 @@ void SendCodeCallbackGet(int port, const std::string &query, const std::string &
 	REQUIRE(result);
 }
 
+// Sends a single GET with no query string at all (simulating a browser's
+// automatic /favicon.ico probe alongside the real redirect).
+void SendPlainGet(int port, const std::string &path, const std::string &host = "127.0.0.1") {
+	duckdb_httplib_openssl::Client cli(host, port);
+	cli.set_connection_timeout(2, 0);
+
+	duckdb_httplib_openssl::Result result;
+	for (int attempt = 0; attempt < 50; attempt++) {
+		result = cli.Get(path);
+		if (result) {
+			break;
+		}
+		std::this_thread::sleep_for(std::chrono::milliseconds(20));
+	}
+	REQUIRE(result);
+}
+
 } // namespace
 
 TEST_CASE("RunLocalOAuthListener returns the token posted with the matching state", "[oauth_listener][integration]") {
@@ -471,12 +488,15 @@ TEST_CASE("BuildAuthorizationCodeUrl assembles the expected query string", "[oau
 	                                            "http://localhost:8765", "https://www.googleapis.com/auth/spreadsheets",
 	                                            "my-state", "my-code-challenge");
 
+	// Same rationale as BuildAuthorizationUrl's own test: redirect_uri and
+	// scope are URIs embedded in this URL's query string, so they must come
+	// out percent-encoded.
 	REQUIRE(url == "https://accounts.google.com/o/oauth2/v2/auth"
 	               "?client_id=my-client-id"
-	               "&redirect_uri=http://localhost:8765"
+	               "&redirect_uri=http%3A%2F%2Flocalhost%3A8765"
 	               "&response_type=code"
 	               "&access_type=offline&prompt=consent"
-	               "&scope=https://www.googleapis.com/auth/spreadsheets"
+	               "&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fspreadsheets"
 	               "&state=my-state"
 	               "&code_challenge=my-code-challenge"
 	               "&code_challenge_method=S256");
@@ -511,6 +531,11 @@ TEST_CASE("ParseAuthorizationCodeCallback throws when the code is missing", "[oa
 	REQUIRE_THROWS_AS(ParseAuthorizationCodeCallback("/?state=abc123", "abc123"), duckdb::IOException);
 }
 
+TEST_CASE("ParseAuthorizationCodeCallback percent-decodes the code", "[oauth_listener]") {
+	std::string code = ParseAuthorizationCodeCallback("/?state=abc123&code=4%2F0Ahas%2Fslash", "abc123");
+	REQUIRE(code == "4/0Ahas/slash");
+}
+
 // =============================================================================
 // ExtractPastedAuthorizationCode Tests
 // =============================================================================
@@ -535,6 +560,11 @@ TEST_CASE("ExtractPastedAuthorizationCode throws when a query string has no stat
 
 TEST_CASE("ExtractPastedAuthorizationCode throws on empty input", "[oauth_listener]") {
 	REQUIRE_THROWS_AS(ExtractPastedAuthorizationCode("", "abc123"), duckdb::IOException);
+}
+
+TEST_CASE("ExtractPastedAuthorizationCode percent-decodes the code from a full redirect URL", "[oauth_listener]") {
+	std::string pasted = "http://localhost:8765/?code=4%2F0Ahas%2Fslash&state=abc123";
+	REQUIRE(ExtractPastedAuthorizationCode(pasted, "abc123") == "4/0Ahas/slash");
 }
 
 // =============================================================================
@@ -593,6 +623,43 @@ TEST_CASE("RunLocalOAuthCodeListener ignores a callback with the wrong state and
 	SendCodeCallbackGet(port, "state=wrong-state&code=attacker-forged-code");
 
 	const std::string real_code = "4/0Athe-real-code";
+	SendCodeCallbackGet(port, "state=" + state + "&code=" + real_code);
+
+	server_thread.join();
+
+	if (thread_exception) {
+		std::rethrow_exception(thread_exception);
+	}
+	REQUIRE(result == real_code);
+}
+
+TEST_CASE("RunLocalOAuthCodeListener doesn't count a favicon-style GET against max_attempts",
+          "[oauth_listener][integration]") {
+	const int port = TEST_PORT_BASE + 10;
+	const std::string state = "code-favicon-state";
+
+	std::atomic<bool> listening {false};
+	std::string result;
+	std::exception_ptr thread_exception;
+
+	AutoJoinThread server_thread([&]() {
+		try {
+			// A max_attempts of 2 would already be exhausted by the two
+			// favicon-style probes below if they counted as failed
+			// attempts - the real callback would then never be reached.
+			result = RunLocalOAuthCodeListener(
+			    port, state, [&]() { listening = true; }, /*max_attempts=*/2);
+		} catch (...) {
+			thread_exception = std::current_exception();
+		}
+	});
+
+	REQUIRE(WaitUntil(listening));
+
+	SendPlainGet(port, "/favicon.ico");
+	SendPlainGet(port, "/favicon.ico");
+
+	const std::string real_code = "4/0Athe-real-code-past-favicons";
 	SendCodeCallbackGet(port, "state=" + state + "&code=" + real_code);
 
 	server_thread.join();

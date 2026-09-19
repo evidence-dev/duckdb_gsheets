@@ -1,5 +1,6 @@
 #pragma once
 
+#include <condition_variable>
 #include <ctime>
 #include <mutex>
 #include <string>
@@ -33,13 +34,20 @@ private:
 	std::string clientId;
 	std::string clientSecret;
 
-	// Guards cachedToken/expirationTime, and is held across Refresh()'s HTTP
-	// call: GetAuthorizationHeader can be called concurrently from multiple
-	// sink threads (e.g. a COPY with PER_THREAD_OUTPUT), and without this a
-	// near-expiry token could let two threads both decide to refresh at once
-	// and race to write the cache. Serializing the (infrequent, ~hourly)
-	// refresh is a small price for avoiding that.
+	// Guards cachedToken/expirationTime/refreshing. GetAuthorizationHeader can
+	// be called concurrently from multiple sink threads (e.g. a COPY with
+	// PER_THREAD_OUTPUT); without synchronization a near-expiry token could
+	// let two threads both decide to refresh at once and race to write the
+	// cache. Unlike a plain lock_guard held for the whole call, this is
+	// released before Refresh()'s blocking HTTP call (see
+	// GetAuthorizationHeader) so a thread that already has a valid cached
+	// token isn't stuck waiting on a network round trip some other thread is
+	// making; `refreshing`/`refreshCv` instead let any threads that do need
+	// the new token wait for the one in-flight refresh instead of each
+	// starting their own.
 	std::mutex cacheMutex;
+	std::condition_variable refreshCv;
+	bool refreshing = false;
 	std::string cachedToken;
 	std::time_t expirationTime = 0;
 

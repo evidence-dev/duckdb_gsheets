@@ -235,9 +235,10 @@ std::string GeneratePkceCodeChallenge(const std::string &code_verifier) {
 std::string BuildAuthorizationCodeUrl(const std::string &auth_url, const std::string &client_id,
                                       const std::string &redirect_uri, const std::string &scope,
                                       const std::string &state, const std::string &code_challenge) {
-	return auth_url + "?client_id=" + client_id + "&redirect_uri=" + redirect_uri + "&response_type=code" +
-	       "&access_type=offline&prompt=consent" + "&scope=" + scope + "&state=" + state +
-	       "&code_challenge=" + code_challenge + "&code_challenge_method=S256";
+	return auth_url + "?client_id=" + url_encode(client_id) + "&redirect_uri=" + url_encode(redirect_uri) +
+	       "&response_type=code" + "&access_type=offline&prompt=consent" + "&scope=" + url_encode(scope) +
+	       "&state=" + url_encode(state) + "&code_challenge=" + url_encode(code_challenge) +
+	       "&code_challenge_method=S256";
 }
 
 std::string ParseAuthorizationCodeCallback(const std::string &request_target, const std::string &expected_state) {
@@ -256,26 +257,7 @@ std::string ParseAuthorizationCodeCallback(const std::string &request_target, co
 }
 
 std::string ExtractPastedAuthorizationCode(const std::string &pasted, const std::string &expected_state) {
-	std::string trimmed = TrimWhitespace(pasted);
-	if (trimmed.empty()) {
-		throw IOException("Pasted input was empty");
-	}
-
-	if (trimmed.find("code=") == std::string::npos) {
-		// No query string to parse - treat the whole line as the bare code,
-		// same rationale as ExtractPastedToken's bare-token case.
-		return trimmed;
-	}
-
-	std::string code = ExtractQueryParam(trimmed, "code");
-	if (code.empty()) {
-		throw IOException("Could not find code in pasted input");
-	}
-
-	std::string state = ExtractQueryParam(trimmed, "state");
-	RequireMatchingState(state, expected_state, "pasted authorization code");
-
-	return code;
+	return ExtractPastedValue(pasted, "code", expected_state, "pasted authorization code");
 }
 
 namespace {
@@ -564,12 +546,25 @@ void RegisterAuthorizationCodeHandlers(HttpServer &server, ListenerOutcome &outc
                                        const std::string &expected_state) {
 	server.Get(".*", [&outcome, max_attempts, expected_state](const HttpRequest &req, HttpResponse &res) {
 		res.set_content(BuildAuthorizationCodeAckBody(), "text/html");
+
+		// A browser's automatic favicon probe (or any other GET with no query
+		// string at all) can't possibly be our callback - the real redirect
+		// always carries `state=` and `code=` in its query string. Skip it
+		// without touching `outcome`, the same as the implicit-grant flow's
+		// GET handler (which never calls SignalFailedAttempt for a GET at
+		// all): otherwise it would silently burn one of max_attempts on a
+		// request that was never a real callback attempt.
+		if (req.target.find('?') == std::string::npos) {
+			return;
+		}
+
 		try {
 			std::string code = ParseAuthorizationCodeCallback(req.target, expected_state);
 			SignalSuccess(outcome, code);
 		} catch (const Exception &) {
-			// Not our callback (wrong/missing state, no code, or a stray
-			// request, e.g. a favicon probe) - keep waiting for the real one.
+			// Not our callback (wrong/missing state, no code, or some other
+			// stray request with a query string) - keep waiting for the real
+			// one.
 			SignalFailedAttempt(outcome, max_attempts);
 		}
 	});

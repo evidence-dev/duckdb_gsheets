@@ -9,11 +9,38 @@ namespace duckdb {
 namespace sheets {
 
 std::string OAuthAuth::GetAuthorizationHeader() {
-	// Held across Refresh()'s HTTP call - see cacheMutex's declaration for why.
-	std::lock_guard<std::mutex> lock(cacheMutex);
-	if (IsExpired()) {
-		Refresh();
+	std::unique_lock<std::mutex> lock(cacheMutex);
+	if (!IsExpired()) {
+		return "Bearer " + cachedToken;
 	}
+
+	// Some other thread is already refreshing - wait for it instead of
+	// starting a second, redundant refresh, then re-check: it may have
+	// refreshed to a token that's since expired again.
+	while (refreshing) {
+		refreshCv.wait(lock);
+		if (!IsExpired()) {
+			return "Bearer " + cachedToken;
+		}
+	}
+
+	// Released for the HTTP call itself (see cacheMutex's declaration) - a
+	// thread that finds `refreshing` true above only blocks on refreshCv,
+	// never on this mutex, so it isn't stuck behind a network round trip it
+	// doesn't need to wait on until it actually needs the result.
+	refreshing = true;
+	lock.unlock();
+	try {
+		Refresh();
+	} catch (...) {
+		lock.lock();
+		refreshing = false;
+		refreshCv.notify_all();
+		throw;
+	}
+	lock.lock();
+	refreshing = false;
+	refreshCv.notify_all();
 	return "Bearer " + cachedToken;
 }
 

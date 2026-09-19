@@ -38,8 +38,12 @@ std::unique_ptr<IAuthProvider> CreateAuthFromSecret(ClientContext &ctx, IHttpCli
 			Value refreshValue;
 			if (provider == "oauth" && gsheet_secret->TryGetValue("refresh_token", refreshValue)) {
 				Value clientIdValue, clientSecretValue;
-				gsheet_secret->TryGetValue("client_id", clientIdValue);
-				gsheet_secret->TryGetValue("client_secret", clientSecretValue);
+				if (!gsheet_secret->TryGetValue("client_id", clientIdValue)) {
+					throw InvalidInputException("'client_id' not found in gsheet secret with a refresh_token");
+				}
+				if (!gsheet_secret->TryGetValue("client_secret", clientSecretValue)) {
+					throw InvalidInputException("'client_secret' not found in gsheet secret with a refresh_token");
+				}
 				return make_uniq<OAuthAuth>(http, refreshValue.ToString(), clientIdValue.ToString(),
 				                            clientSecretValue.ToString());
 			}
