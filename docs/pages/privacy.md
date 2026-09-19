@@ -15,7 +15,7 @@ This policy outlines the practices regarding the collection, use, and security o
 If you choose to use the OAuth authentication, the application requires access to your Google Sheets through OAuth authentication using the following scope:
 - `https://www.googleapis.com/auth/spreadsheets`
 
-This scope allows the app to read and modify your Google Sheets data. The OAuth flow uses Proof Key for Code Exchange (PKCE) for enhanced security. All authentication and authorization processes occur securely between your local system and Google’s OAuth service.
+This scope allows the app to read and modify your Google Sheets data. By default, logging in grants a short-lived access token only. If you additionally register your own OAuth client and supply both its client ID and client secret, the OAuth flow instead uses the authorization code grant with Proof Key for Code Exchange (PKCE) for enhanced security, and a refresh token is stored so future sessions can re-authenticate without a new browser login. All authentication and authorization processes occur securely between your local system and Google's OAuth service.
 
 ## 3. Token Management
 
@@ -35,7 +35,7 @@ then the resulting data is stored on your local system. Otherwise, no data is re
 
 ## 6. Security
 
-The application uses industry-standard security practices, including the OAuth flow with PKCE (Proof Key for Code Exchange) for secure authentication. All data is handled locally, and no information is transmitted externally unless initiated by the user (e.g., exporting data).
+The application uses industry-standard security practices, including (when a self-registered OAuth client is used, see Section 2) the authorization code OAuth flow with PKCE (Proof Key for Code Exchange) for secure authentication. All data is handled locally, and no information is transmitted externally unless initiated by the user (e.g., exporting data).
 
 ## 7. Your Control Over Data
 

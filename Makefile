@@ -20,12 +20,12 @@ test_unit_build:
 test_unit: test_unit_build
 	./build/unit_tests/unit_tests
 
-# Run the OAuth listener's Catch2 tests (RunLocalOAuthListener integration
-# tests, CSRF/paste-fallback unit tests, etc.). Unlike test_unit, these can't
-# be standalone: oauth_listener.cpp is built on httplib::Server, which needs
-# DuckDB's re2 regex wrapper and Exception-formatting machinery - see
-# test/integration/CMakeLists.txt - so this builds (and links) as part of the
-# full extension build.
+# Run the OAuth listener's Catch2 tests (RunLocalOAuthListener/
+# RunLocalOAuthCodeListener integration tests, CSRF/PKCE/paste-fallback unit
+# tests, etc.). Unlike test_unit, these can't be standalone: oauth_listener.cpp
+# is built on httplib::Server, which needs DuckDB's re2 regex wrapper and
+# Exception-formatting machinery - see test/integration/CMakeLists.txt - so
+# this builds (and links) as part of the full extension build.
 test_oauth_listener: release
 	./build/release/extension/gsheets/test/integration/oauth_listener_tests
 

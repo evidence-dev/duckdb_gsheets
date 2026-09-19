@@ -28,4 +28,11 @@ IOException::IOException(const unordered_map<string, string> &extra_info, const 
 InterruptException::InterruptException() : Exception(ExceptionType::INTERRUPT, INTERRUPT_MESSAGE) {
 }
 
+InvalidInputException::InvalidInputException(const string &msg) : Exception(ExceptionType::INVALID_INPUT, msg) {
+}
+
+InvalidInputException::InvalidInputException(const unordered_map<string, string> &extra_info, const string &msg)
+    : Exception(extra_info, ExceptionType::INVALID_INPUT, msg) {
+}
+
 } // namespace duckdb

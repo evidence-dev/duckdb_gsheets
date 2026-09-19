@@ -134,7 +134,7 @@ TEST_CASE("ExtractPastedToken percent-decodes the token from a full redirect URL
 }
 
 // =============================================================================
-// RunLocalOAuthListener Integration Tests
+// RunLocalOAuthListener / RunLocalOAuthCodeListener Integration Tests
 // =============================================================================
 // Plays the role of the browser: connects over a real loopback TCP socket
 // (via httplib::Client, the same library the listener itself is now built
@@ -206,6 +206,23 @@ void SendGetThenPost(int port, const std::string &post_body, const std::string &
 
 	auto post_result = cli.Post("/", post_body, "application/x-www-form-urlencoded");
 	REQUIRE(post_result);
+}
+
+// Sends a single GET with the given query string (simulating the OAuth
+// redirect carrying the authorization code).
+void SendCodeCallbackGet(int port, const std::string &query, const std::string &host = "127.0.0.1") {
+	duckdb_httplib_openssl::Client cli(host, port);
+	cli.set_connection_timeout(2, 0);
+
+	duckdb_httplib_openssl::Result result;
+	for (int attempt = 0; attempt < 50; attempt++) {
+		result = cli.Get("/?" + query);
+		if (result) {
+			break;
+		}
+		std::this_thread::sleep_for(std::chrono::milliseconds(20));
+	}
+	REQUIRE(result);
 }
 
 } // namespace
@@ -414,6 +431,176 @@ TEST_CASE("RunLocalOAuthListener ignores an invalid paste and still accepts the 
 		std::rethrow_exception(thread_exception);
 	}
 	REQUIRE(result == real_token);
+}
+
+// =============================================================================
+// PKCE Tests
+// =============================================================================
+
+TEST_CASE("GeneratePkceCodeVerifier returns a verifier within the RFC 7636 length range", "[oauth_listener][pkce]") {
+	std::string verifier = GeneratePkceCodeVerifier();
+	REQUIRE(verifier.length() >= 43);
+	REQUIRE(verifier.length() <= 128);
+}
+
+TEST_CASE("GeneratePkceCodeVerifier returns different verifiers each call", "[oauth_listener][pkce]") {
+	REQUIRE(GeneratePkceCodeVerifier() != GeneratePkceCodeVerifier());
+}
+
+TEST_CASE("GeneratePkceCodeChallenge is deterministic for a given verifier", "[oauth_listener][pkce]") {
+	std::string verifier = "fixed-test-verifier-value";
+	REQUIRE(GeneratePkceCodeChallenge(verifier) == GeneratePkceCodeChallenge(verifier));
+}
+
+TEST_CASE("GeneratePkceCodeChallenge differs for different verifiers", "[oauth_listener][pkce]") {
+	REQUIRE(GeneratePkceCodeChallenge("verifier-one") != GeneratePkceCodeChallenge("verifier-two"));
+}
+
+TEST_CASE("GeneratePkceCodeChallenge matches the known S256 vector from RFC 7636", "[oauth_listener][pkce]") {
+	// The example verifier/challenge pair from RFC 7636 Appendix B.
+	std::string verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+	REQUIRE(GeneratePkceCodeChallenge(verifier) == "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM");
+}
+
+// =============================================================================
+// BuildAuthorizationCodeUrl Tests
+// =============================================================================
+
+TEST_CASE("BuildAuthorizationCodeUrl assembles the expected query string", "[oauth_listener]") {
+	std::string url = BuildAuthorizationCodeUrl("https://accounts.google.com/o/oauth2/v2/auth", "my-client-id",
+	                                            "http://localhost:8765", "https://www.googleapis.com/auth/spreadsheets",
+	                                            "my-state", "my-code-challenge");
+
+	REQUIRE(url == "https://accounts.google.com/o/oauth2/v2/auth"
+	               "?client_id=my-client-id"
+	               "&redirect_uri=http://localhost:8765"
+	               "&response_type=code"
+	               "&access_type=offline&prompt=consent"
+	               "&scope=https://www.googleapis.com/auth/spreadsheets"
+	               "&state=my-state"
+	               "&code_challenge=my-code-challenge"
+	               "&code_challenge_method=S256");
+}
+
+TEST_CASE("BuildAuthorizationCodeUrl does not touch BuildAuthorizationUrl's response_type", "[oauth_listener]") {
+	// Regression guard: the default (implicit-grant) flow's URL builder must
+	// remain untouched by adding the authorization-code variant.
+	std::string url = BuildAuthorizationUrl("AUTH", "CID", "REDIR", "SCOPE", "STATE");
+	REQUIRE(url.find("response_type=token") != std::string::npos);
+}
+
+// =============================================================================
+// ParseAuthorizationCodeCallback Tests
+// =============================================================================
+
+TEST_CASE("ParseAuthorizationCodeCallback returns the code when state matches", "[oauth_listener]") {
+	std::string code = ParseAuthorizationCodeCallback("/?state=abc123&code=4/0Areal-code-value", "abc123");
+	REQUIRE(code == "4/0Areal-code-value");
+}
+
+TEST_CASE("ParseAuthorizationCodeCallback throws on state mismatch", "[oauth_listener]") {
+	REQUIRE_THROWS_AS(ParseAuthorizationCodeCallback("/?state=attacker-guess&code=forged-code", "abc123"),
+	                  duckdb::IOException);
+}
+
+TEST_CASE("ParseAuthorizationCodeCallback throws when state is missing entirely", "[oauth_listener]") {
+	REQUIRE_THROWS_AS(ParseAuthorizationCodeCallback("/?code=no-state-at-all", "abc123"), duckdb::IOException);
+}
+
+TEST_CASE("ParseAuthorizationCodeCallback throws when the code is missing", "[oauth_listener]") {
+	REQUIRE_THROWS_AS(ParseAuthorizationCodeCallback("/?state=abc123", "abc123"), duckdb::IOException);
+}
+
+// =============================================================================
+// ExtractPastedAuthorizationCode Tests
+// =============================================================================
+
+TEST_CASE("ExtractPastedAuthorizationCode accepts a bare code with no query string", "[oauth_listener]") {
+	REQUIRE(ExtractPastedAuthorizationCode("4/0Abare-code-value", "abc123") == "4/0Abare-code-value");
+}
+
+TEST_CASE("ExtractPastedAuthorizationCode extracts the code from a full redirect URL", "[oauth_listener]") {
+	std::string pasted = "http://localhost:8765/?code=4/0Afrom-url&scope=https://www.googleapis.com/auth/"
+	                     "spreadsheets&state=abc123";
+	REQUIRE(ExtractPastedAuthorizationCode(pasted, "abc123") == "4/0Afrom-url");
+}
+
+TEST_CASE("ExtractPastedAuthorizationCode throws on state mismatch", "[oauth_listener]") {
+	REQUIRE_THROWS_AS(ExtractPastedAuthorizationCode("code=forged&state=wrong-state", "abc123"), duckdb::IOException);
+}
+
+TEST_CASE("ExtractPastedAuthorizationCode throws when a query string has no state param", "[oauth_listener]") {
+	REQUIRE_THROWS_AS(ExtractPastedAuthorizationCode("code=4/0Ano-state", "abc123"), duckdb::IOException);
+}
+
+TEST_CASE("ExtractPastedAuthorizationCode throws on empty input", "[oauth_listener]") {
+	REQUIRE_THROWS_AS(ExtractPastedAuthorizationCode("", "abc123"), duckdb::IOException);
+}
+
+// =============================================================================
+// RunLocalOAuthCodeListener Integration Tests
+// =============================================================================
+
+TEST_CASE("RunLocalOAuthCodeListener returns the code from a GET with the matching state",
+          "[oauth_listener][integration]") {
+	const int port = TEST_PORT_BASE + 8;
+	const std::string state = "code-integration-test-state";
+
+	std::atomic<bool> listening {false};
+	std::string result;
+	std::exception_ptr thread_exception;
+
+	AutoJoinThread server_thread([&]() {
+		try {
+			result = RunLocalOAuthCodeListener(port, state, [&]() { listening = true; });
+		} catch (...) {
+			thread_exception = std::current_exception();
+		}
+	});
+
+	REQUIRE(WaitUntil(listening));
+
+	const std::string fake_code = "4/0Afake-integration-test-code";
+	SendCodeCallbackGet(port, "state=" + state + "&code=" + fake_code);
+
+	server_thread.join();
+
+	if (thread_exception) {
+		std::rethrow_exception(thread_exception);
+	}
+	REQUIRE(result == fake_code);
+}
+
+TEST_CASE("RunLocalOAuthCodeListener ignores a callback with the wrong state and waits for the real one",
+          "[oauth_listener][integration]") {
+	const int port = TEST_PORT_BASE + 9;
+	const std::string state = "code-correct-state";
+
+	std::atomic<bool> listening {false};
+	std::string result;
+	std::exception_ptr thread_exception;
+
+	AutoJoinThread server_thread([&]() {
+		try {
+			result = RunLocalOAuthCodeListener(port, state, [&]() { listening = true; });
+		} catch (...) {
+			thread_exception = std::current_exception();
+		}
+	});
+
+	REQUIRE(WaitUntil(listening));
+
+	SendCodeCallbackGet(port, "state=wrong-state&code=attacker-forged-code");
+
+	const std::string real_code = "4/0Athe-real-code";
+	SendCodeCallbackGet(port, "state=" + state + "&code=" + real_code);
+
+	server_thread.join();
+
+	if (thread_exception) {
+		std::rethrow_exception(thread_exception);
+	}
+	REQUIRE(result == real_code);
 }
 
 TEST_CASE("RunLocalOAuthListener throws InterruptException promptly when is_interrupted becomes true",

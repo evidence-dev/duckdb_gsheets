@@ -1,6 +1,6 @@
 # name: test/sql/copy_to.test
 # description: test COPY TO function
-# group: [gsheets]
+# group: [sql]
 
 require-env TOKEN
 

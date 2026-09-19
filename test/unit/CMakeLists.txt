@@ -36,6 +36,9 @@ set(UNIT_TEST_SOURCES
     # up to link. They're built and run instead as part of the full extension
     # build - see test/integration/CMakeLists.txt and `make
     # test_oauth_listener`.
+    #
+    # Needed by OAuthAuth (url_encode)
+    ${EXT_ROOT}/src/gsheets_utils.cpp
     # Transport (needed for auth tests)
     ${EXT_ROOT}/src/sheets/transport/http_client.cpp
     ${EXT_ROOT}/src/sheets/transport/mock_http_client.cpp

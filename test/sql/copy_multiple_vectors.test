@@ -1,6 +1,6 @@
 # name: test/sql/copy_multiple_vectors.test
 # description: test COPY TO function
-# group: [gsheets]
+# group: [sql]
 
 require-env TOKEN
 

@@ -4,8 +4,11 @@
 #include <condition_variable>
 #include <cstdint>
 #include <iostream>
+#include <memory>
 #include <mutex>
 #include <thread>
+
+#include <openssl/evp.h>
 
 #include "duckdb/common/exception.hpp"
 
@@ -13,6 +16,7 @@
 #include "httplib.hpp"
 
 #include "gsheets_utils.hpp"
+#include "sheets/util/encoding.hpp"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -38,11 +42,12 @@ using HttpResponse = duckdb_httplib_openssl::Response;
 constexpr int CONNECTION_TIMEOUT_SECONDS = 10;
 
 // The CSRF check shared by every place a state parameter is validated
-// (ParseTokenPayload, ExtractPastedToken below): only a payload/URL that
-// echoes back the exact state generated for this specific flow is accepted,
-// so a stray local process, browser tab, or crafted link can't inject an
-// arbitrary token. Centralized so a future hardening of this check only has
-// to change one place instead of drifting across both.
+// (ParseTokenPayload, ExtractPastedToken, ParseAuthorizationCodeCallback,
+// ExtractPastedAuthorizationCode below): only a payload/URL that echoes back
+// the exact state generated for this specific flow is accepted, so a stray
+// local process, browser tab, or crafted link can't inject an arbitrary
+// token/code. Centralized so a future hardening of this check only has to
+// change one place instead of drifting across four.
 void RequireMatchingState(const std::string &received_state, const std::string &expected_state,
                           const std::string &what) {
 	if (received_state.empty() || received_state != expected_state) {
@@ -207,6 +212,72 @@ bool TryReadPastedLine(std::string &line) {
 	return static_cast<bool>(std::getline(std::cin, line));
 }
 
+std::string GeneratePkceCodeVerifier() {
+	return generate_random_string(64);
+}
+
+std::string GeneratePkceCodeChallenge(const std::string &code_verifier) {
+	unsigned char digest[EVP_MAX_MD_SIZE];
+	unsigned int digest_len = 0;
+
+	std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)> ctx(EVP_MD_CTX_new(), &EVP_MD_CTX_free);
+	if (!ctx) {
+		throw IOException("Failed to create digest context for PKCE code_challenge");
+	}
+	if (EVP_DigestInit_ex(ctx.get(), EVP_sha256(), nullptr) != 1 ||
+	    EVP_DigestUpdate(ctx.get(), code_verifier.data(), code_verifier.size()) != 1 ||
+	    EVP_DigestFinal_ex(ctx.get(), digest, &digest_len) != 1) {
+		throw IOException("Failed to compute PKCE code_challenge");
+	}
+	return Base64UrlEncode(digest, digest_len);
+}
+
+std::string BuildAuthorizationCodeUrl(const std::string &auth_url, const std::string &client_id,
+                                      const std::string &redirect_uri, const std::string &scope,
+                                      const std::string &state, const std::string &code_challenge) {
+	return auth_url + "?client_id=" + client_id + "&redirect_uri=" + redirect_uri + "&response_type=code" +
+	       "&access_type=offline&prompt=consent" + "&scope=" + scope + "&state=" + state +
+	       "&code_challenge=" + code_challenge + "&code_challenge_method=S256";
+}
+
+std::string ParseAuthorizationCodeCallback(const std::string &request_target, const std::string &expected_state) {
+	std::string state = ExtractQueryParam(request_target, "state");
+
+	// Same CSRF check as ParseTokenPayload: only a callback that echoes back
+	// the state we generated for this specific flow is accepted.
+	RequireMatchingState(state, expected_state, "callback");
+
+	std::string code = ExtractQueryParam(request_target, "code");
+	if (code.empty()) {
+		throw IOException("Failed to obtain authorization code");
+	}
+
+	return code;
+}
+
+std::string ExtractPastedAuthorizationCode(const std::string &pasted, const std::string &expected_state) {
+	std::string trimmed = TrimWhitespace(pasted);
+	if (trimmed.empty()) {
+		throw IOException("Pasted input was empty");
+	}
+
+	if (trimmed.find("code=") == std::string::npos) {
+		// No query string to parse - treat the whole line as the bare code,
+		// same rationale as ExtractPastedToken's bare-token case.
+		return trimmed;
+	}
+
+	std::string code = ExtractQueryParam(trimmed, "code");
+	if (code.empty()) {
+		throw IOException("Could not find code in pasted input");
+	}
+
+	std::string state = ExtractQueryParam(trimmed, "state");
+	RequireMatchingState(state, expected_state, "pasted authorization code");
+
+	return code;
+}
+
 namespace {
 
 // Outcome box shared between the httplib worker thread that receives a valid
@@ -308,11 +379,11 @@ private:
 	bool bound_ = false;
 };
 
-// Drives the accept/poll/deadline/interrupt/paste-poll loop behind
-// RunLocalOAuthListener. Factored out from it (rather than inlined) so a
-// second flow can reuse this same driver later, supplying its own request
-// handling via `register_handlers`/`handle_pasted` instead of duplicating
-// the loop.
+// Shared accept/poll/deadline/interrupt/paste-poll driver behind both
+// RunLocalOAuthListener (implicit grant) and RunLocalOAuthCodeListener
+// (authorization code) - the two flows only differ in which HTTP methods
+// they handle and how a request/pasted line is turned into a result, which
+// they supply via `register_handlers`/`handle_pasted`.
 //
 // Binds two servers - one on 127.0.0.1 (IPv4), one on ::1 (IPv6) - and
 // listens on whichever bind. macOS Safari resolves "localhost" to the IPv6
@@ -480,6 +551,41 @@ bool HandlePastedImplicitGrantToken(const std::string &pasted_line, const std::s
 	}
 }
 
+// The page served for the browser's GET carrying the authorization code.
+// Unlike BuildRedirectPageBody, no client-side JS is needed: the code is
+// already visible to us as a normal query parameter, since (unlike an
+// implicit-grant access token) it's safe to expose to the redirect handler
+// over the network.
+std::string BuildAuthorizationCodeAckBody() {
+	return "<html><body>Login complete - you can close this window.</body></html>";
+}
+
+void RegisterAuthorizationCodeHandlers(HttpServer &server, ListenerOutcome &outcome, int max_attempts,
+                                       const std::string &expected_state) {
+	server.Get(".*", [&outcome, max_attempts, expected_state](const HttpRequest &req, HttpResponse &res) {
+		res.set_content(BuildAuthorizationCodeAckBody(), "text/html");
+		try {
+			std::string code = ParseAuthorizationCodeCallback(req.target, expected_state);
+			SignalSuccess(outcome, code);
+		} catch (const Exception &) {
+			// Not our callback (wrong/missing state, no code, or a stray
+			// request, e.g. a favicon probe) - keep waiting for the real one.
+			SignalFailedAttempt(outcome, max_attempts);
+		}
+	});
+}
+
+bool HandlePastedAuthorizationCode(const std::string &pasted_line, const std::string &expected_state,
+                                   std::string &out_code) {
+	try {
+		out_code = ExtractPastedAuthorizationCode(pasted_line, expected_state);
+		return true;
+	} catch (const Exception &e) {
+		std::cerr << "Ignoring pasted input: " << e.what() << '\n';
+		return false;
+	}
+}
+
 } // namespace
 
 std::string RunLocalOAuthListener(int port, const std::string &expected_state,
@@ -493,6 +599,20 @@ std::string RunLocalOAuthListener(int port, const std::string &expected_state,
 	    },
 	    [&](const std::string &pasted_line, std::string &out_token) {
 		    return HandlePastedImplicitGrantToken(pasted_line, expected_state, out_token);
+	    });
+}
+
+std::string RunLocalOAuthCodeListener(int port, const std::string &expected_state,
+                                      const std::function<void()> &on_listening, int max_attempts,
+                                      const std::function<bool()> &is_interrupted,
+                                      const std::function<bool(std::string &)> &try_read_pasted_input) {
+	return RunLoginListenerLoop(
+	    port, on_listening, max_attempts, is_interrupted, try_read_pasted_input,
+	    [&expected_state](HttpServer &server, ListenerOutcome &outcome, int attempts) {
+		    RegisterAuthorizationCodeHandlers(server, outcome, attempts, expected_state);
+	    },
+	    [&](const std::string &pasted_line, std::string &out_code) {
+		    return HandlePastedAuthorizationCode(pasted_line, expected_state, out_code);
 	    });
 }
 

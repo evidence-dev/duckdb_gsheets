@@ -1,6 +1,6 @@
 # name: test/sql/read_gsheet_key_file.test
 # description: test use of key_file for auth for read_gsheet() function
-# group: [gsheets]
+# group: [sql]
 
 # The key_file should be in the JSON format that Google exports
 # (note that newline characters should not be escaped in the private key)

@@ -113,5 +113,60 @@ std::string RunLocalOAuthListener(int port, const std::string &expected_state,
                                   const std::function<bool()> &is_interrupted = nullptr,
                                   const std::function<bool(std::string &)> &try_read_pasted_input = nullptr);
 
+// ---------------------------------------------------------------------------
+// Authorization-code + PKCE flow support.
+//
+// Used only when a caller supplies its own OAuth client_secret alongside a
+// client_id (see CreateGsheetSecretFromOAuth) - the flow above (implicit
+// grant, response_type=token) remains the default and is untouched by any
+// of the below.
+// ---------------------------------------------------------------------------
+
+// Generates a PKCE code_verifier: a random string (length 64, within the
+// RFC 7636-required 43-128 range) drawn from the PKCE-unreserved character
+// set. Pure/randomized, no network or browser involved.
+std::string GeneratePkceCodeVerifier();
+
+// Derives the S256 PKCE code_challenge for a given code_verifier:
+// Base64UrlEncode(SHA256(code_verifier)). Pure/side-effect-free.
+std::string GeneratePkceCodeChallenge(const std::string &code_verifier);
+
+// Builds the Google OAuth2 authorization URL for the authorization-code +
+// PKCE flow (response_type=code, access_type=offline, prompt=consent so a
+// refresh_token is (re)issued every time, plus the PKCE challenge).
+// Pure/side-effect-free so it can be unit tested without any network or
+// browser involved.
+std::string BuildAuthorizationCodeUrl(const std::string &auth_url, const std::string &client_id,
+                                      const std::string &redirect_uri, const std::string &scope,
+                                      const std::string &state, const std::string &code_challenge);
+
+// Parses the "code"/"state" query parameters off a redirect callback's
+// request-target (e.g. "/?code=abc&state=xyz") and validates `state` against
+// `expected_state` - the same CSRF protection ParseTokenPayload applies to
+// the implicit-grant flow. Throws IOException if no code is found, or the
+// state doesn't match. Pure/side-effect-free.
+std::string ParseAuthorizationCodeCallback(const std::string &request_target, const std::string &expected_state);
+
+// Paste-fallback counterpart to ParseAuthorizationCodeCallback, mirroring
+// ExtractPastedToken's rules but for "code=" instead of "access_token=":
+// accepts either a full redirect URL/query string (state required and
+// validated) or a bare authorization code (no state to check, since the
+// user is deliberately supplying it themselves). Throws IOException if no
+// code can be found, or a URL/query-shaped paste's state is missing or
+// mismatches. Pure/side-effect-free.
+std::string ExtractPastedAuthorizationCode(const std::string &pasted, const std::string &expected_state);
+
+// Authorization-code-flow counterpart to RunLocalOAuthListener: the
+// redirect carries "code"/"state" as normal GET query parameters (safe to
+// read server-side, unlike an implicit-grant access token), so this waits
+// for a single valid GET instead of RunLocalOAuthListener's GET-then-POST
+// handshake. Shares the same listener/deadline/interrupt/paste-poll
+// machinery and parameters otherwise - see RunLocalOAuthListener for what
+// each one does.
+std::string RunLocalOAuthCodeListener(int port, const std::string &expected_state,
+                                      const std::function<void()> &on_listening = nullptr, int max_attempts = 20,
+                                      const std::function<bool()> &is_interrupted = nullptr,
+                                      const std::function<bool(std::string &)> &try_read_pasted_input = nullptr);
+
 } // namespace sheets
 } // namespace duckdb

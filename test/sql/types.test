@@ -1,6 +1,6 @@
 # name: test/sql/types.test
 # description: test types
-# group: [gsheets]
+# group: [sql]
 
 require-env TOKEN
 

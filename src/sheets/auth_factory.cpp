@@ -2,6 +2,7 @@
 
 #include "utils/secret.hpp"
 #include "sheets/auth/bearer_token_auth.hpp"
+#include "sheets/auth/oauth_auth.hpp"
 #include "sheets/auth/service_account_auth.hpp"
 
 namespace duckdb {
@@ -26,6 +27,21 @@ std::unique_ptr<IAuthProvider> CreateAuthFromSecret(ClientContext &ctx, IHttpCli
 			Value tokenValue;
 			if (!gsheet_secret->TryGetValue("token", tokenValue)) {
 				throw InvalidInputException("'token' not found in gsheet secret");
+			}
+
+			// Only `oauth` secrets created via the authorization-code + PKCE
+			// path (client_id and client_secret both supplied at CREATE
+			// SECRET time) carry a refresh_token - everything else
+			// (access_token secrets, and oauth secrets created via the
+			// default/implicit-grant flow) keeps using the static
+			// BearerTokenAuth, exactly as before.
+			Value refreshValue;
+			if (provider == "oauth" && gsheet_secret->TryGetValue("refresh_token", refreshValue)) {
+				Value clientIdValue, clientSecretValue;
+				gsheet_secret->TryGetValue("client_id", clientIdValue);
+				gsheet_secret->TryGetValue("client_secret", clientSecretValue);
+				return make_uniq<OAuthAuth>(http, refreshValue.ToString(), clientIdValue.ToString(),
+				                            clientSecretValue.ToString());
 			}
 			return make_uniq<BearerTokenAuth>(tokenValue.ToString());
 		}

@@ -30,7 +30,6 @@ GSheetCopyFunction::GSheetCopyFunction() : CopyFunction("gsheet") {
 unique_ptr<FunctionData> GSheetCopyFunction::GSheetWriteBind(ClientContext &context, CopyFunctionBindInput &input,
                                                              const vector<string> &names,
                                                              const vector<LogicalType> &sql_types) {
-
 	string file_path = input.info.file_path;
 	auto options = input.info.options;
 

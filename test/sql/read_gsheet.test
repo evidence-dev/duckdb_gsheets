@@ -1,6 +1,6 @@
 # name: test/sql/read_gsheet.test
 # description: test read_gsheet() function
-# group: [gsheets]
+# group: [sql]
 
 require-env TOKEN
 
