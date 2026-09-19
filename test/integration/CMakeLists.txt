@@ -21,7 +21,7 @@ add_executable(
   oauth_listener_tests
   ${CMAKE_CURRENT_SOURCE_DIR}/../unit/test_main.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../unit/sheets/auth/test_oauth_listener.cpp
-  ${CMAKE_CURRENT_SOURCE_DIR}/../../src/sheets/auth/oauth_listener.cpp)
+  ${OAUTH_LISTENER_SOURCES})
 
 # link_extension_libraries (duckdb/extension/extension_build_tools.cmake) is how
 # DuckDB's own unittest/shell binaries pull in duckdb_generated_extension_loader

@@ -23,11 +23,15 @@ TEST_CASE("BuildAuthorizationUrl assembles the expected query string", "[oauth_l
 	    BuildAuthorizationUrl("https://accounts.google.com/o/oauth2/v2/auth", "my-client-id", "http://localhost:8765",
 	                          "https://www.googleapis.com/auth/spreadsheets", "my-state");
 
+	// redirect_uri and scope are themselves URIs, so their ':' and '/' must
+	// come out percent-encoded - Google's endpoint parses this URL's query
+	// string, not the raw concatenation, so an unescaped nested URI would be
+	// misread as more top-level query params.
 	REQUIRE(url == "https://accounts.google.com/o/oauth2/v2/auth"
 	               "?client_id=my-client-id"
-	               "&redirect_uri=http://localhost:8765"
+	               "&redirect_uri=http%3A%2F%2Flocalhost%3A8765"
 	               "&response_type=token"
-	               "&scope=https://www.googleapis.com/auth/spreadsheets"
+	               "&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fspreadsheets"
 	               "&state=my-state");
 }
 
@@ -62,6 +66,16 @@ TEST_CASE("ParseTokenPayload throws on malformed payload", "[oauth_listener]") {
 
 TEST_CASE("ParseTokenPayload throws when the token is empty", "[oauth_listener]") {
 	REQUIRE_THROWS_AS(ParseTokenPayload("state=abc123&access_token=", "abc123"), duckdb::IOException);
+}
+
+TEST_CASE("ParseTokenPayload percent-decodes the access_token", "[oauth_listener]") {
+	std::string token = ParseTokenPayload("state=abc123&access_token=ya29.has%20a%20space", "abc123");
+	REQUIRE(token == "ya29.has a space");
+}
+
+TEST_CASE("ParseTokenPayload percent-decodes state before comparing against expected_state", "[oauth_listener]") {
+	std::string token = ParseTokenPayload("state=weird%20state&access_token=tok", "weird state");
+	REQUIRE(token == "tok");
 }
 
 // =============================================================================
@@ -112,6 +126,11 @@ TEST_CASE("ExtractPastedToken ignores a param name that only ends with access_to
 	// be mistaken for the real "access_token=" param.
 	std::string pasted = "some_access_token=decoy&access_token=ya29.real&state=abc123";
 	REQUIRE(ExtractPastedToken(pasted, "abc123") == "ya29.real");
+}
+
+TEST_CASE("ExtractPastedToken percent-decodes the token from a full redirect URL", "[oauth_listener]") {
+	std::string pasted = "http://localhost:8765/#access_token=ya29.has%2Fslash&state=abc123";
+	REQUIRE(ExtractPastedToken(pasted, "abc123") == "ya29.has/slash");
 }
 
 // =============================================================================

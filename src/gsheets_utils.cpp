@@ -1,3 +1,4 @@
+#include <cctype>
 #include <random>
 #include <regex>
 #include <sstream>
@@ -79,6 +80,22 @@ std::string url_encode(const std::string &str) {
 		}
 	}
 	return encoded;
+}
+
+std::string url_decode(const std::string &str) {
+	std::string decoded;
+	decoded.reserve(str.size());
+	for (size_t i = 0; i < str.size(); i++) {
+		if (str[i] == '%' && i + 2 < str.size() && isxdigit(static_cast<unsigned char>(str[i + 1])) &&
+		    isxdigit(static_cast<unsigned char>(str[i + 2]))) {
+			int value = std::stoi(str.substr(i + 1, 2), nullptr, 16);
+			decoded += static_cast<char>(value);
+			i += 2;
+		} else {
+			decoded += str[i];
+		}
+	}
+	return decoded;
 }
 
 } // namespace duckdb

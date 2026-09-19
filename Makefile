@@ -8,7 +8,7 @@ EXT_CONFIG=${PROJ_DIR}extension_config.cmake
 include extension-ci-tools/makefiles/duckdb_extension.Makefile
 
 # Custom test targets
-.PHONY: test_unit test_unit_build test_oauth_listener test_sql test_all
+.PHONY: test_unit test_unit_build test_oauth_listener test_oauth_listener_debug test_sql test_all test_all_debug
 
 # Build unit tests (standalone, doesn't require full DuckDB build)
 test_unit_build:
@@ -29,6 +29,9 @@ test_unit: test_unit_build
 test_oauth_listener: release
 	./build/release/extension/gsheets/test/integration/oauth_listener_tests
 
+test_oauth_listener_debug: debug
+	./build/debug/extension/gsheets/test/integration/oauth_listener_tests
+
 # SQL tests (SQLLogicTests via DuckDB test runner)
 test_sql: test_release
 
@@ -37,7 +40,7 @@ test_sql_debug: test_debug
 # Run all tests (unit + OAuth listener + SQL)
 test_all: test_unit test_oauth_listener test_sql
 
-test_all_debug: test_unit test_sql_debug
+test_all_debug: test_unit test_oauth_listener_debug test_sql_debug
 
 # Clean unit test build
 clean_unit_tests:

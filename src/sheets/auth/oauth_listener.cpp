@@ -12,6 +12,8 @@
 #define CPPHTTPLIB_OPENSSL_SUPPORT
 #include "httplib.hpp"
 
+#include "gsheets_utils.hpp"
+
 #ifdef _WIN32
 #include <windows.h>
 #else
@@ -58,9 +60,9 @@ std::string TrimWhitespace(const std::string &s) {
 }
 
 // Finds `key=` in `text` at a param boundary (start of string, or right
-// after '&', '#' or '?') and returns the value up to the next '&' (or end of
-// string). Returns "" if `key` never appears at a boundary - e.g. it's only
-// present as a suffix of a longer param name.
+// after '&', '#' or '?') and returns the percent-decoded value up to the
+// next '&' (or end of string). Returns "" if `key` never appears at a
+// boundary - e.g. it's only present as a suffix of a longer param name.
 std::string ExtractQueryParam(const std::string &text, const std::string &key) {
 	std::string marker = key + "=";
 	size_t search_from = 0;
@@ -74,7 +76,7 @@ std::string ExtractQueryParam(const std::string &text, const std::string &key) {
 			size_t value_start = pos + marker.size();
 			size_t value_end = text.find('&', value_start);
 			size_t value_len = value_end == std::string::npos ? std::string::npos : value_end - value_start;
-			return text.substr(value_start, value_len);
+			return url_decode(text.substr(value_start, value_len));
 		}
 		search_from = pos + 1;
 	}
@@ -133,26 +135,15 @@ bool StdinHasPendingData() {
 
 std::string BuildAuthorizationUrl(const std::string &auth_url, const std::string &client_id,
                                   const std::string &redirect_uri, const std::string &scope, const std::string &state) {
-	return auth_url + "?client_id=" + client_id + "&redirect_uri=" + redirect_uri + "&response_type=token" +
-	       "&scope=" + scope + "&state=" + state;
+	return auth_url + "?client_id=" + url_encode(client_id) + "&redirect_uri=" + url_encode(redirect_uri) +
+	       "&response_type=token" + "&scope=" + url_encode(scope) + "&state=" + url_encode(state);
 }
 
 std::string ParseTokenPayload(const std::string &body, const std::string &expected_state) {
-	const std::string state_prefix = "state=";
-	const std::string token_marker = "&access_token=";
+	std::string state = ExtractQueryParam(body, "state");
+	std::string token = ExtractQueryParam(body, "access_token");
 
-	if (body.compare(0, state_prefix.size(), state_prefix) != 0) {
-		throw IOException("Malformed OAuth callback payload");
-	}
-	size_t token_marker_pos = body.find(token_marker);
-	if (token_marker_pos == std::string::npos) {
-		throw IOException("Malformed OAuth callback payload");
-	}
-
-	std::string received_state = body.substr(state_prefix.size(), token_marker_pos - state_prefix.size());
-	std::string token = body.substr(token_marker_pos + token_marker.size());
-
-	RequireMatchingState(received_state, expected_state, "callback");
+	RequireMatchingState(state, expected_state, "callback");
 	if (token.empty()) {
 		throw IOException("Failed to obtain access token");
 	}
@@ -160,38 +151,53 @@ std::string ParseTokenPayload(const std::string &body, const std::string &expect
 	return token;
 }
 
-std::string ExtractPastedToken(const std::string &pasted, const std::string &expected_state) {
+namespace {
+
+// Shared by ExtractPastedToken/ExtractPastedAuthorizationCode below: both
+// pastes are either a bare value with no query string at all, or a full
+// URL/query string carrying `field_name=<value>` and, if so, a `state` that
+// must match `expected_state` - the paste-fallback counterpart to
+// ParseTokenPayload/ParseAuthorizationCodeCallback's checks. Centralized so
+// the two paste flows can't quietly diverge on this logic the way
+// ParseTokenPayload's now-removed hand-rolled parser once did.
+std::string ExtractPastedValue(const std::string &pasted, const std::string &field_name,
+                               const std::string &expected_state, const std::string &error_context) {
 	std::string trimmed = TrimWhitespace(pasted);
 	if (trimmed.empty()) {
 		throw IOException("Pasted input was empty");
 	}
 
-	if (trimmed.find("access_token=") == std::string::npos) {
+	if (trimmed.find(field_name + "=") == std::string::npos) {
 		// No query string to parse - treat the whole line as the bare
-		// token. No state to check here, unlike ParseTokenPayload: this
-		// came from the user directly pasting into their own terminal, not
-		// an unsolicited request reaching the listener, so there's nothing
-		// for the CSRF check to protect against.
+		// value. No state to check here, unlike the HTTP callback path:
+		// this came from the user directly pasting into their own
+		// terminal, not an unsolicited request reaching the listener, so
+		// there's nothing for the CSRF check to protect against.
 		return trimmed;
 	}
 
-	std::string token = ExtractQueryParam(trimmed, "access_token");
-	if (token.empty()) {
-		throw IOException("Could not find access_token in pasted input");
+	std::string value = ExtractQueryParam(trimmed, field_name);
+	if (value.empty()) {
+		throw IOException("Could not find " + field_name + " in pasted input");
 	}
 
-	// Unlike the bare-token case above, this input is URL/query-shaped, so it
+	// Unlike the bare-value case above, this input is URL/query-shaped, so it
 	// claims to be an actual redirect from our flow - and a genuine redirect
 	// always echoes back the state we generated. Require it to be present
 	// and match rather than only checking it when present: silently
 	// accepting a missing state here would let an attacker hand a victim a
-	// crafted "access_token=...&state=" (or state-less) link to paste in,
-	// defeating the CSRF protection this same check applies to the HTTP
-	// callback path in ParseTokenPayload.
+	// crafted link with the state param omitted to paste in, defeating the
+	// CSRF protection this same check applies to the HTTP callback path.
 	std::string state = ExtractQueryParam(trimmed, "state");
-	RequireMatchingState(state, expected_state, "pasted token");
+	RequireMatchingState(state, expected_state, error_context);
 
-	return token;
+	return value;
+}
+
+} // namespace
+
+std::string ExtractPastedToken(const std::string &pasted, const std::string &expected_state) {
+	return ExtractPastedValue(pasted, "access_token", expected_state, "pasted token");
 }
 
 bool TryReadPastedLine(std::string &line) {
@@ -323,6 +329,23 @@ private:
 // fallback is actually available (stdin is an interactive terminal); if it
 // isn't, there would be no way to ever complete the login, so this throws
 // instead.
+//
+// `has_paste_fallback` is false whenever `try_read_pasted_input` is unset,
+// i.e. stdin isn't an interactive terminal - see PrepareLoginCallbacks in
+// gsheets_auth.cpp. On a genuinely headless host that's not necessarily a
+// dead end (a forwarded port or an already-open browser can still complete
+// the redirect), so this doesn't fail any faster - it just points a caller
+// who does hit the timeout at the documented non-interactive path instead of
+// leaving them to guess why login never got a chance to complete.
+std::string BuildTimeoutMessage(bool has_paste_fallback) {
+	std::string message = "Timed out waiting for a valid OAuth callback";
+	if (!has_paste_fallback) {
+		message += ". For non-interactive/headless use, create the secret with PROVIDER access_token or "
+		           "PROVIDER key_file instead of PROVIDER oauth.";
+	}
+	return message;
+}
+
 std::string RunLoginListenerLoop(int port, const std::function<void()> &on_listening, int max_attempts,
                                  const std::function<bool()> &is_interrupted,
                                  const std::function<bool(std::string &)> &try_read_pasted_input,
@@ -369,14 +392,14 @@ std::string RunLoginListenerLoop(int port, const std::function<void()> &on_liste
 			bool signaled = outcome.cv.wait_for(lock, std::chrono::seconds(1), [&] { return outcome.done; });
 			if (signaled) {
 				if (outcome.gave_up) {
-					throw IOException("Timed out waiting for a valid OAuth callback");
+					throw IOException(BuildTimeoutMessage(static_cast<bool>(try_read_pasted_input)));
 				}
 				return outcome.value;
 			}
 		}
 
 		if (std::chrono::steady_clock::now() >= deadline) {
-			throw IOException("Timed out waiting for a valid OAuth callback");
+			throw IOException(BuildTimeoutMessage(static_cast<bool>(try_read_pasted_input)));
 		}
 		if (is_interrupted && is_interrupted()) {
 			throw InterruptException();
@@ -408,8 +431,10 @@ std::string BuildRedirectPageBody() {
 	       "  fetch('/', {"
 	       "    method: 'POST',"
 	       "    body: 'state=' + encodeURIComponent(state) + '&access_token=' + encodeURIComponent(token)"
-	       "  }).then(() => {"
-	       "    window.location.href = 'https://duckdb-gsheets.com/oauth#ready=1&access_token=success';"
+	       "  }).then((response) => {"
+	       "    if (response.ok) {"
+	       "      window.location.href = 'https://duckdb-gsheets.com/oauth#ready=1&access_token=success';"
+	       "    }"
 	       "  });"
 	       "}"
 	       "</script></body></html>";
@@ -425,13 +450,17 @@ void RegisterImplicitGrantHandlers(HttpServer &server, ListenerOutcome &outcome,
 	           [](const HttpRequest &, HttpResponse &res) { res.set_content(BuildRedirectPageBody(), "text/html"); });
 
 	server.Post(".*", [&outcome, max_attempts, expected_state](const HttpRequest &req, HttpResponse &res) {
-		res.status = 200;
 		try {
 			std::string token = ParseTokenPayload(req.body, expected_state);
 			SignalSuccess(outcome, token);
+			res.status = 200;
 		} catch (const Exception &) {
 			// Not our callback (wrong/missing state, malformed body, or a
-			// stray request) - keep waiting for the real one.
+			// stray request) - keep waiting for the real one, and tell the
+			// page's JS (see BuildRedirectPageBody's response.ok check) so it
+			// doesn't redirect to the success page over a callback that
+			// actually failed.
+			res.status = 400;
 			SignalFailedAttempt(outcome, max_attempts);
 		}
 	});
