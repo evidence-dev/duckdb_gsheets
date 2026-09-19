@@ -40,14 +40,21 @@ std::string ParseTokenPayload(const std::string &body, const std::string &expect
 // that whole URL (or just its "#..." fragment/query string) or a bare access
 // token:
 //   - If the input contains "access_token=", it's parsed like a query
-//     string; when a "state=" parameter is also present it's validated
-//     against `expected_state` (same CSRF check as ParseTokenPayload).
-//   - Otherwise the trimmed input is treated as the raw token itself, with
-//     no state to check - that's fine here, unlike the HTTP listener, since
-//     the user is deliberately supplying it themselves rather than an
-//     unsolicited request reaching the listener.
-// Throws IOException if no token can be found, or if a present state
-// mismatches. Pure/side-effect-free.
+//     string, and its "state=" parameter must be present and validated
+//     against `expected_state` (same CSRF check as ParseTokenPayload). A
+//     genuine redirect always echoes the state we generated, so a
+//     URL/query-shaped paste with no state (or the wrong one) is rejected
+//     rather than silently accepted - otherwise an attacker could hand a
+//     victim a crafted "http://localhost:<port>/#access_token=..." link
+//     with the state omitted and have it accepted as if it were the real
+//     redirect.
+//   - Otherwise (no "access_token=" substring at all) the trimmed input is
+//     treated as the raw token itself, with no state to check - that's fine
+//     here, unlike the HTTP listener, since the user is deliberately
+//     supplying it themselves rather than an unsolicited request reaching
+//     the listener.
+// Throws IOException if no token can be found, or if a URL/query-shaped
+// paste's state is missing or mismatches. Pure/side-effect-free.
 std::string ExtractPastedToken(const std::string &pasted, const std::string &expected_state);
 
 // Non-blocking check for a line of input waiting on stdin: returns false
@@ -59,6 +66,13 @@ std::string ExtractPastedToken(const std::string &pasted, const std::string &exp
 // that also services the listener socket(s), with no separate thread left
 // behind to race the DuckDB CLI's own prompt for stdin once this call
 // returns.
+//
+// Callers should only wire this up when stdin is a real interactive
+// terminal (isatty). Any line here is treated as a paste attempt, and an
+// input that doesn't parse as a valid token/URL is silently ignored and
+// waited past (see RunLocalOAuthListener) - fine for a human correcting a
+// bad paste, but on a piped/scripted stdin (e.g. `duckdb < script.sql`)
+// this would instead consume and discard the next line of the script.
 bool TryReadPastedLine(std::string &line);
 
 // Runs a short-lived local HTTP listener on `port`, bound to loopback only,

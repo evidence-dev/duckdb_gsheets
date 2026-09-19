@@ -108,8 +108,12 @@ TEST_CASE("ExtractPastedToken throws on state mismatch", "[oauth_listener]") {
 	REQUIRE_THROWS_AS(ExtractPastedToken("access_token=forged&state=wrong-state", "abc123"), duckdb::IOException);
 }
 
-TEST_CASE("ExtractPastedToken accepts a query string with no state param", "[oauth_listener]") {
-	REQUIRE(ExtractPastedToken("access_token=ya29.no-state", "abc123") == "ya29.no-state");
+TEST_CASE("ExtractPastedToken throws when a query string has no state param", "[oauth_listener]") {
+	// A genuine redirect always echoes back the state we generated, so a
+	// URL/query-shaped paste with no state at all must be rejected the same
+	// as one with the wrong state - otherwise a crafted link omitting state
+	// entirely would bypass the CSRF check.
+	REQUIRE_THROWS_AS(ExtractPastedToken("access_token=ya29.no-state", "abc123"), duckdb::IOException);
 }
 
 TEST_CASE("ExtractPastedToken throws when access_token has no value", "[oauth_listener]") {

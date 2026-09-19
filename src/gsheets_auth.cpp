@@ -3,6 +3,12 @@
 #include <cstdlib>
 #include <json.hpp>
 
+#ifdef _WIN32
+#include <io.h>
+#else
+#include <unistd.h>
+#endif
+
 #include "duckdb/common/exception/binder_exception.hpp"
 
 #include "gsheets_auth.hpp"
@@ -13,6 +19,20 @@
 using json = nlohmann::json;
 
 namespace duckdb {
+
+// Whether stdin is a real interactive terminal rather than a pipe/redirect
+// (e.g. `duckdb < script.sql`, or the extension embedded in some other
+// process's stdin). The paste-a-token fallback below must only be offered
+// when this is true: TryReadPastedLine treats any line it reads as a paste
+// attempt, so on a non-interactive stdin it would instead consume and
+// discard whatever the caller's own script/pipe was about to feed in next.
+static bool IsStdinInteractive() {
+#ifdef _WIN32
+	return _isatty(_fileno(stdin)) != 0;
+#else
+	return isatty(fileno(stdin)) != 0;
+#endif
+}
 
 // This code is copied, with minor modifications from
 // https://github.com/duckdb/duckdb_azure/blob/main/src/azure_secret.cpp
@@ -152,9 +172,13 @@ std::string InitiateOAuthFlow(ClientContext &context) {
 	std::string state = generate_random_string(10);
 	std::string auth_request_url = sheets::BuildAuthorizationUrl(auth_url, client_id, redirect_uri, scope, state);
 
+	// Only offer (and later poll for) the paste-a-token fallback when stdin is
+	// a real interactive terminal - see IsStdinInteractive.
+	bool stdin_interactive = IsStdinInteractive();
+
 	// Open the browser only once the listener is actually ready to receive the
 	// redirect (RunLocalOAuthListener invokes this after it starts listening).
-	auto open_browser = [&auth_request_url]() {
+	auto open_browser = [&auth_request_url, stdin_interactive]() {
 		bool should_open_browser = true;
 
 #ifdef __linux__
@@ -179,9 +203,11 @@ std::string InitiateOAuthFlow(ClientContext &context) {
 		std::cout << auth_request_url << '\n';
 		std::cout << "(This will time out after " << (sheets::kOAuthListenerTimeoutSeconds / 60)
 		           << " minutes if login isn't completed.)" << '\n';
-		std::cout << '\n'
-		           << "Alternatively, after logging in, paste the redirect URL (or just its access_token) "
-		           << "here and press Enter:" << '\n';
+		if (stdin_interactive) {
+			std::cout << '\n'
+			           << "Alternatively, after logging in, paste the redirect URL (or just its access_token) "
+			           << "here and press Enter:" << '\n';
+		}
 	};
 
 	// Lets Ctrl+C cancel a pending login instead of blocking the CLI until
@@ -198,7 +224,16 @@ std::string InitiateOAuthFlow(ClientContext &context) {
 	// socket(s) instead of needing a separate thread that could otherwise
 	// linger reading stdin - and race the DuckDB CLI's own prompt for it -
 	// after this call returns.
-	auto try_read_pasted_input = [](std::string &line) { return sheets::TryReadPastedLine(line); };
+	//
+	// Left unset (nullptr) unless stdin is an interactive terminal: any line
+	// this reads is treated as a paste attempt regardless of content, so on a
+	// piped/scripted stdin it would instead consume and discard whatever
+	// input was actually meant for the caller (e.g. the next statement in a
+	// `duckdb < script.sql` run).
+	std::function<bool(std::string &)> try_read_pasted_input;
+	if (stdin_interactive) {
+		try_read_pasted_input = [](std::string &line) { return sheets::TryReadPastedLine(line); };
+	}
 
 	return sheets::RunLocalOAuthListener(PORT, state, open_browser, /*max_attempts=*/20, is_interrupted,
 	                                      try_read_pasted_input);

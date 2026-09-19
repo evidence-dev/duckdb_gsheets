@@ -338,8 +338,16 @@ std::string ExtractPastedToken(const std::string &pasted, const std::string &exp
 		throw IOException("Could not find access_token in pasted input");
 	}
 
+	// Unlike the bare-token case above, this input is URL/query-shaped, so it
+	// claims to be an actual redirect from our flow - and a genuine redirect
+	// always echoes back the state we generated. Require it to be present
+	// and match rather than only checking it when present: silently
+	// accepting a missing state here would let an attacker hand a victim a
+	// crafted "access_token=...&state=" (or state-less) link to paste in,
+	// defeating the CSRF protection this same check applies to the HTTP
+	// callback path in ParseTokenPayload.
 	std::string state = ExtractQueryParam(trimmed, "state");
-	if (!state.empty() && state != expected_state) {
+	if (state != expected_state) {
 		throw IOException("OAuth state mismatch - rejecting pasted token");
 	}
 
