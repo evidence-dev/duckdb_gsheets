@@ -107,6 +107,23 @@ TEST_CASE("OAuthAuth throws on invalid JSON", "[auth]") {
 	REQUIRE_THROWS_AS(auth.GetAuthorizationHeader(), duckdb::IOException);
 }
 
+TEST_CASE("OAuthAuth throws IOException (not an uncaught json::type_error) on a wrong-typed field", "[auth]") {
+	// A 200 response whose access_token is present but the wrong JSON type
+	// (null here) must still produce the same clean IOException as a parse
+	// failure, not an uncaught nlohmann::json::type_error escaping from
+	// .get<std::string>().
+	duckdb::sheets::MockHttpClient mockHttp;
+
+	duckdb::sheets::HttpResponse badResponse;
+	badResponse.statusCode = 200;
+	badResponse.body = R"({"access_token": null, "expires_in": 3600})";
+	mockHttp.AddResponse(badResponse);
+
+	duckdb::sheets::OAuthAuth auth(mockHttp, "refresh-token", "client-id", "client-secret");
+
+	REQUIRE_THROWS_AS(auth.GetAuthorizationHeader(), duckdb::IOException);
+}
+
 // =============================================================================
 // ServiceAccountAuth Tests
 // =============================================================================

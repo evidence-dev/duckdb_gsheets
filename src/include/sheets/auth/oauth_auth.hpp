@@ -1,6 +1,7 @@
 #pragma once
 
 #include <ctime>
+#include <mutex>
 #include <string>
 
 #include "sheets/auth/auth_provider.hpp"
@@ -23,6 +24,7 @@ public:
 	    : http(http), refreshToken(refreshToken), clientId(clientId), clientSecret(clientSecret) {
 	}
 
+	// Thread-safe: safe to call concurrently (see cacheMutex).
 	std::string GetAuthorizationHeader() override;
 
 private:
@@ -30,6 +32,14 @@ private:
 	std::string refreshToken;
 	std::string clientId;
 	std::string clientSecret;
+
+	// Guards cachedToken/expirationTime, and is held across Refresh()'s HTTP
+	// call: GetAuthorizationHeader can be called concurrently from multiple
+	// sink threads (e.g. a COPY with PER_THREAD_OUTPUT), and without this a
+	// near-expiry token could let two threads both decide to refresh at once
+	// and race to write the cache. Serializing the (infrequent, ~hourly)
+	// refresh is a small price for avoiding that.
+	std::mutex cacheMutex;
 	std::string cachedToken;
 	std::time_t expirationTime = 0;
 

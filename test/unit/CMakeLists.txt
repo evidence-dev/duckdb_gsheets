@@ -27,6 +27,7 @@ set(UNIT_TEST_SOURCES
     sheets/auth/test_auth.cpp
     ${EXT_ROOT}/src/sheets/auth/bearer_token_auth.cpp
     ${EXT_ROOT}/src/sheets/auth/oauth_auth.cpp
+    ${EXT_ROOT}/src/sheets/auth/oauth_token_exchange.cpp
     ${EXT_ROOT}/src/sheets/auth/service_account_auth.cpp
     # oauth_listener.cpp and its tests (sheets/auth/test_oauth_listener.cpp) are
     # intentionally NOT built here: oauth_listener.cpp is built on

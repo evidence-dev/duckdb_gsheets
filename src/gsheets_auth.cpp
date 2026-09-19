@@ -15,6 +15,7 @@
 #include "gsheets_auth.hpp"
 #include "gsheets_utils.hpp"
 #include "sheets/auth/oauth_listener.hpp"
+#include "sheets/auth/oauth_token_exchange.hpp"
 #include "sheets/transport/client_factory.hpp"
 #include "sheets/transport/http_type.hpp"
 #include "utils/options.hpp"
@@ -168,32 +169,16 @@ static std::string ExchangeAuthorizationCodeForTokens(sheets::IHttpClient &http,
 	                   ("&client_id=" + url_encode(client_id)) + ("&client_secret=" + url_encode(client_secret)) +
 	                   ("&redirect_uri=" + url_encode(redirect_uri)) + ("&code_verifier=" + url_encode(code_verifier));
 
-	sheets::HttpHeaders headers;
-	headers["Content-Type"] = "application/x-www-form-urlencoded";
-	sheets::HttpResponse response = http.Post("https://oauth2.googleapis.com/token", headers, body);
+	sheets::OAuthTokenResponse tokenResponse = sheets::PostToTokenEndpoint(http, body, "OAuth token exchange");
 
-	if (response.statusCode != 200) {
-		throw IOException("OAuth token exchange failed: " + response.body);
-	}
-
-	json responseJson;
-	try {
-		responseJson = json::parse(response.body);
-	} catch (const json::exception &) {
-		throw IOException("Failed to parse OAuth token exchange response: " + response.body);
-	}
-
-	if (!responseJson.contains("access_token")) {
-		throw IOException("OAuth token exchange response missing 'access_token': " + response.body);
-	}
-	if (!responseJson.contains("refresh_token")) {
+	if (tokenResponse.refresh_token.empty()) {
 		throw IOException("Google did not return a refresh_token for this client_id/client_secret. This usually "
 		                  "means this OAuth app was already authorized without one - revoke its access at "
 		                  "https://myaccount.google.com/permissions and try again.");
 	}
 
-	out_refresh_token = responseJson["refresh_token"].get<std::string>();
-	return responseJson["access_token"].get<std::string>();
+	out_refresh_token = tokenResponse.refresh_token;
+	return tokenResponse.access_token;
 }
 
 struct OAuthCodeFlowResult {
