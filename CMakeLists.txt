@@ -59,10 +59,10 @@ if(APPLE)
   target_link_libraries(${LOADABLE_EXTENSION_NAME} "-framework Security" "-framework CoreFoundation")
 endif()
 
-# The local OAuth listener (src/sheets/auth/oauth_listener.cpp) uses Winsock on
-# Windows. socket_compat.hpp's #pragma comment(lib, "ws2_32.lib") only takes
-# effect for MSVC, so link ws2_32 explicitly here for other toolchains
-# (e.g. MinGW/Ninja generators), matching test/unit/CMakeLists.txt.
+# The local OAuth listener (src/sheets/auth/oauth_listener.cpp) uses the
+# vendored httplib::Server, which uses Winsock on Windows. httplib.hpp's
+# #pragma comment(lib, "ws2_32.lib") only takes effect for MSVC, so link
+# ws2_32 explicitly here for other toolchains (e.g. MinGW/Ninja generators).
 if(WIN32)
   target_link_libraries(${EXTENSION_NAME} ws2_32)
   target_link_libraries(${LOADABLE_EXTENSION_NAME} ws2_32)

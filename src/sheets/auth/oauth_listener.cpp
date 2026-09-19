@@ -1,18 +1,22 @@
 #include "sheets/auth/oauth_listener.hpp"
 
-#include <algorithm>
-#include <cctype>
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
-#include <cstring>
 #include <iostream>
+#include <mutex>
+#include <thread>
 
 #include "duckdb/common/exception.hpp"
 
-#include "sheets/auth/socket_compat.hpp"
+#define CPPHTTPLIB_OPENSSL_SUPPORT
+#include "httplib.hpp"
 
 #ifdef _WIN32
 #include <windows.h>
+#else
+#include <sys/select.h>
+#include <unistd.h>
 #endif
 
 namespace duckdb {
@@ -20,203 +24,28 @@ namespace sheets {
 
 namespace {
 
-constexpr int BUFFER_SIZE = 8192;
-// accept() has no built-in timeout, so a browser that never completes the
-// redirect (headless environment, user abandons the flow, etc.) would
-// otherwise block this call forever regardless of max_attempts. Poll with
-// select() instead and bound the whole wait by a wall-clock deadline.
-constexpr int ACCEPT_POLL_SECONDS = 1;
+using HttpServer = duckdb_httplib_openssl::Server;
+using HttpRequest = duckdb_httplib_openssl::Request;
+using HttpResponse = duckdb_httplib_openssl::Response;
 
-bool StartsWith(const std::string &s, const std::string &prefix) {
-	return s.compare(0, prefix.size(), prefix) == 0;
-}
+// Bounds how long a single connection's read/write may take. httplib enforces
+// this with a plain socket-level recv/send timeout, so a connection that's
+// accepted but then stalls (an idle probe, a client that writes a partial
+// request and goes quiet) can't block a worker thread - and therefore this
+// listener - forever. Generous relative to a real loopback round trip.
+constexpr int CONNECTION_TIMEOUT_SECONDS = 10;
 
-// A single recv() isn't guaranteed to return a whole HTTP request: some
-// clients (observed with Safari's fetch()) write the headers and body as
-// separate TCP writes, so the headers can arrive first with the body still
-// in flight. This keeps reading - first until the header/body separator is
-// found, then until at least as many body bytes as Content-Length declares
-// have arrived - instead of silently treating a not-yet-arrived body as
-// empty. Bounded by MAX_REQUEST_SIZE so a connection that never completes a
-// request can't grow this buffer without limit.
-std::string ReadHttpRequest(socket_t client_socket) {
-	constexpr size_t MAX_REQUEST_SIZE = 65536;
-	std::string request;
-	char buffer[BUFFER_SIZE];
-
-	size_t header_end = std::string::npos;
-	size_t content_length = 0;
-
-	while (request.size() < MAX_REQUEST_SIZE) {
-		int bytes_read = SocketRecv(client_socket, buffer, static_cast<int>(sizeof(buffer)));
-		if (bytes_read <= 0) {
-			break;
-		}
-		request.append(buffer, static_cast<size_t>(bytes_read));
-
-		if (header_end == std::string::npos) {
-			header_end = request.find("\r\n\r\n");
-			if (header_end == std::string::npos) {
-				continue;
-			}
-			std::string headers = request.substr(0, header_end);
-			std::transform(headers.begin(), headers.end(), headers.begin(),
-			                [](unsigned char c) { return std::tolower(c); });
-			size_t cl_pos = headers.find("content-length:");
-			if (cl_pos != std::string::npos) {
-				try {
-					content_length = static_cast<size_t>(std::stoul(headers.substr(cl_pos + 15)));
-				} catch (const std::exception &) {
-					// Malformed Content-Length value - treat as no body left
-					// to wait for; ParseTokenPayload will reject the
-					// (already malformed) request downstream as usual.
-				}
-			}
-		}
-
-		size_t body_so_far = request.size() - (header_end + 4);
-		if (body_so_far >= content_length) {
-			break;
-		}
+// The CSRF check shared by every place a state parameter is validated
+// (ParseTokenPayload, ExtractPastedToken below): only a payload/URL that
+// echoes back the exact state generated for this specific flow is accepted,
+// so a stray local process, browser tab, or crafted link can't inject an
+// arbitrary token. Centralized so a future hardening of this check only has
+// to change one place instead of drifting across both.
+void RequireMatchingState(const std::string &received_state, const std::string &expected_state,
+                          const std::string &what) {
+	if (received_state.empty() || received_state != expected_state) {
+		throw IOException("OAuth state mismatch - rejecting " + what);
 	}
-
-	return request;
-}
-
-// Waits up to `timeout_seconds` for either `fd_a` or `fd_b` (either may be
-// INVALID_SOCKET_VALUE if that socket wasn't created) to have an incoming
-// connection ready to accept(). Returns whichever fd is ready, or
-// INVALID_SOCKET_VALUE on timeout, so the caller can re-check the overall
-// deadline instead of blocking indefinitely.
-socket_t WaitForConnection(socket_t fd_a, socket_t fd_b, int timeout_seconds) {
-	fd_set read_fds;
-	FD_ZERO(&read_fds);
-
-	int max_fd = -1;
-	if (fd_a != INVALID_SOCKET_VALUE) {
-		FD_SET(fd_a, &read_fds);
-		max_fd = std::max(max_fd, static_cast<int>(fd_a));
-	}
-	if (fd_b != INVALID_SOCKET_VALUE) {
-		FD_SET(fd_b, &read_fds);
-		max_fd = std::max(max_fd, static_cast<int>(fd_b));
-	}
-	if (max_fd < 0) {
-		return INVALID_SOCKET_VALUE;
-	}
-
-	struct timeval tv;
-	tv.tv_sec = timeout_seconds;
-	tv.tv_usec = 0;
-
-	if (select(max_fd + 1, &read_fds, nullptr, nullptr, &tv) <= 0) {
-		return INVALID_SOCKET_VALUE;
-	}
-	if (fd_a != INVALID_SOCKET_VALUE && FD_ISSET(fd_a, &read_fds)) {
-		return fd_a;
-	}
-	if (fd_b != INVALID_SOCKET_VALUE && FD_ISSET(fd_b, &read_fds)) {
-		return fd_b;
-	}
-	return INVALID_SOCKET_VALUE;
-}
-
-// Creates, binds (to the loopback address for `family`) and listens on a
-// socket for the OAuth callback. `family` is AF_INET or AF_INET6.
-//
-// macOS Safari resolves "localhost" to the IPv6 loopback address (::1)
-// ahead of 127.0.0.1 and, unlike Chromium/Firefox, doesn't reliably fall
-// back to IPv4 when nothing answers there - so an IPv4-only listener made
-// the whole login flow silently fail in Safari even though the redirect
-// URI ("http://localhost:<port>") worked fine in other browsers. Listening
-// on both families sidesteps that without touching the redirect URI (which
-// must stay in sync with what's registered for the OAuth client).
-//
-// IPv6 support is best-effort: if creating/binding the IPv6 socket fails
-// (disabled at the OS level, sandboxed environment, etc.) this returns
-// INVALID_SOCKET_VALUE rather than throwing, and the caller proceeds with
-// IPv4 only, matching prior behavior.
-socket_t CreateLoopbackListener(int family, int port, bool required) {
-	socket_t fd = socket(family, SOCK_STREAM, 0);
-	if (fd == INVALID_SOCKET_VALUE) {
-		if (required) {
-			throw IOException("Failed to create socket");
-		}
-		return INVALID_SOCKET_VALUE;
-	}
-
-	int opt = 1;
-	setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char *>(&opt), sizeof(opt));
-	if (family == AF_INET6) {
-		// Without this, some platforms (Linux) let the IPv6 socket also
-		// accept IPv4 connections, which would collide with the separate
-		// IPv4 socket bound to the same port.
-		setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, reinterpret_cast<const char *>(&opt), sizeof(opt));
-	}
-
-	bool bound = false;
-	if (family == AF_INET) {
-		struct sockaddr_in address;
-		std::memset(&address, 0, sizeof(address));
-		address.sin_family = AF_INET;
-		address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-		address.sin_port = htons(static_cast<uint16_t>(port));
-		bound = bind(fd, reinterpret_cast<struct sockaddr *>(&address), sizeof(address)) == 0;
-	} else {
-		struct sockaddr_in6 address;
-		std::memset(&address, 0, sizeof(address));
-		address.sin6_family = AF_INET6;
-		address.sin6_addr = in6addr_loopback;
-		address.sin6_port = htons(static_cast<uint16_t>(port));
-		bound = bind(fd, reinterpret_cast<struct sockaddr *>(&address), sizeof(address)) == 0;
-	}
-
-	// Backlog > 1: browsers (Safari in particular) fire off several extra
-	// same-origin requests right after loading the redirect page - favicon
-	// and Apple touch-icon probes were observed racing the real POST here -
-	// so a backlog of 1 risked the kernel refusing the real callback's
-	// connection outright if it arrived while one of those was still queued.
-	if (!bound || listen(fd, 8) < 0) {
-		CloseSocket(fd);
-		if (required) {
-			throw IOException("Failed to bind to port " + std::to_string(port));
-		}
-		return INVALID_SOCKET_VALUE;
-	}
-	return fd;
-}
-
-void SendResponse(socket_t client_socket, const std::string &response) {
-	SocketSend(client_socket, response.c_str(), static_cast<int>(response.length()));
-}
-
-// The page served for the browser's GET after the OAuth redirect. Runs
-// client-side, in the browser, at the http://localhost:<port> origin: reads
-// the access_token/state out of the URL fragment (fragments are never sent
-// to any server) and POSTs them back to us, same-origin - so no CORS
-// headers are needed, or served, on either response.
-std::string BuildRedirectPageResponse() {
-	std::string body =
-	    "<script>"
-	    "const hash = window.location.hash.substring(1);"
-	    "const params = new URLSearchParams(hash);"
-	    "const token = params.get('access_token');"
-	    "const state = params.get('state') || '';"
-	    "if (token) {"
-	    "  fetch('/', {"
-	    "    method: 'POST',"
-	    "    body: 'state=' + encodeURIComponent(state) + '&access_token=' + encodeURIComponent(token)"
-	    "  }).then(() => {"
-	    "    window.location.href = 'https://duckdb-gsheets.com/oauth#ready=1&access_token=success';"
-	    "  });"
-	    "}"
-	    "</script></body></html>";
-	return "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nConnection: close\r\nContent-Length: " +
-	       std::to_string(body.length()) + "\r\n\r\n" + body;
-}
-
-std::string BuildAckResponse() {
-	return "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
 }
 
 std::string TrimWhitespace(const std::string &s) {
@@ -260,7 +89,35 @@ bool StdinHasPendingData() {
 	if (handle == INVALID_HANDLE_VALUE || handle == nullptr) {
 		return false;
 	}
-	return WaitForSingleObject(handle, 0) == WAIT_OBJECT_0;
+
+	// GetNumberOfConsoleInputEvents/WaitForSingleObject signal "ready" on any
+	// queued input record, not just typed text: a mouse move, window resize,
+	// or focus-change event (all routine while a terminal just sits waiting
+	// for the browser redirect) counts too. Treating any of those as "a line
+	// is ready" let TryReadPastedLine call the blocking std::getline with
+	// nothing actually typed yet, stalling this poll loop - along with Ctrl+C
+	// handling and the real browser callback - until the user happened to
+	// type something. Drain and discard every non-keystroke event first, so
+	// only a genuine keydown with a character is reported as pending.
+	INPUT_RECORD record;
+	DWORD events_read;
+	while (true) {
+		DWORD pending = 0;
+		if (!GetNumberOfConsoleInputEvents(handle, &pending) || pending == 0) {
+			return false;
+		}
+		if (!PeekConsoleInputW(handle, &record, 1, &events_read) || events_read == 0) {
+			return false;
+		}
+		if (record.EventType == KEY_EVENT && record.Event.KeyEvent.bKeyDown &&
+		    record.Event.KeyEvent.uChar.UnicodeChar != 0) {
+			return true;
+		}
+		// Not a keystroke we care about (key-up, a modifier-only key, mouse,
+		// resize, focus, ...) - consume it so it doesn't spin this loop
+		// forever on the same stale event, then keep looking.
+		ReadConsoleInputW(handle, &record, 1, &events_read);
+	}
 }
 #else
 bool StdinHasPendingData() {
@@ -275,25 +132,16 @@ bool StdinHasPendingData() {
 } // namespace
 
 std::string BuildAuthorizationUrl(const std::string &auth_url, const std::string &client_id,
-                                   const std::string &redirect_uri, const std::string &scope,
-                                   const std::string &state) {
+                                  const std::string &redirect_uri, const std::string &scope, const std::string &state) {
 	return auth_url + "?client_id=" + client_id + "&redirect_uri=" + redirect_uri + "&response_type=token" +
 	       "&scope=" + scope + "&state=" + state;
-}
-
-std::string ExtractHttpBody(const std::string &raw_request) {
-	size_t body_start = raw_request.find("\r\n\r\n");
-	if (body_start == std::string::npos) {
-		return "";
-	}
-	return raw_request.substr(body_start + 4);
 }
 
 std::string ParseTokenPayload(const std::string &body, const std::string &expected_state) {
 	const std::string state_prefix = "state=";
 	const std::string token_marker = "&access_token=";
 
-	if (!StartsWith(body, state_prefix)) {
+	if (body.compare(0, state_prefix.size(), state_prefix) != 0) {
 		throw IOException("Malformed OAuth callback payload");
 	}
 	size_t token_marker_pos = body.find(token_marker);
@@ -304,13 +152,7 @@ std::string ParseTokenPayload(const std::string &body, const std::string &expect
 	std::string received_state = body.substr(state_prefix.size(), token_marker_pos - state_prefix.size());
 	std::string token = body.substr(token_marker_pos + token_marker.size());
 
-	// This is the CSRF check: only a payload that echoes back the random
-	// state we generated for this specific flow is accepted, so a stray
-	// local process or browser tab that also reaches this listener can't
-	// inject an arbitrary access token.
-	if (received_state.empty() || received_state != expected_state) {
-		throw IOException("OAuth state mismatch - rejecting callback");
-	}
+	RequireMatchingState(received_state, expected_state, "callback");
 	if (token.empty()) {
 		throw IOException("Failed to obtain access token");
 	}
@@ -347,9 +189,7 @@ std::string ExtractPastedToken(const std::string &pasted, const std::string &exp
 	// defeating the CSRF protection this same check applies to the HTTP
 	// callback path in ParseTokenPayload.
 	std::string state = ExtractQueryParam(trimmed, "state");
-	if (state != expected_state) {
-		throw IOException("OAuth state mismatch - rejecting pasted token");
-	}
+	RequireMatchingState(state, expected_state, "pasted token");
 
 	return token;
 }
@@ -361,110 +201,270 @@ bool TryReadPastedLine(std::string &line) {
 	return static_cast<bool>(std::getline(std::cin, line));
 }
 
-std::string RunLocalOAuthListener(int port, const std::string &expected_state,
-                                   const std::function<void()> &on_listening, int max_attempts,
-                                   const std::function<bool()> &is_interrupted,
-                                   const std::function<bool(std::string &)> &try_read_pasted_input) {
-	if (!InitSockets()) {
-		throw IOException("Failed to initialize sockets");
+namespace {
+
+// Outcome box shared between the httplib worker thread that receives a valid
+// (or invalid) callback and the calling thread's poll loop in
+// RunLoginListenerLoop below - takes the place of the old accept-loop's
+// direct return value now that receiving happens on a background thread
+// instead of inline.
+struct ListenerOutcome {
+	std::mutex mtx;
+	std::condition_variable cv;
+	bool done = false;
+	bool gave_up = false;
+	std::string value;
+	int failed_attempts = 0;
+};
+
+void SignalSuccess(ListenerOutcome &outcome, const std::string &value) {
+	std::lock_guard<std::mutex> lock(outcome.mtx);
+	if (!outcome.done) {
+		outcome.done = true;
+		outcome.value = value;
+	}
+	outcome.cv.notify_all();
+}
+
+// Records a callback that was received but failed validation (wrong/missing
+// state, malformed payload). Once `max_attempts` of these have been seen,
+// gives up rather than waiting out the full wall-clock deadline - mainly so
+// tests don't have to wait through the production timeout to exercise this
+// path.
+void SignalFailedAttempt(ListenerOutcome &outcome, int max_attempts) {
+	std::lock_guard<std::mutex> lock(outcome.mtx);
+	if (outcome.done) {
+		return;
+	}
+	outcome.failed_attempts++;
+	if (outcome.failed_attempts >= max_attempts) {
+		outcome.done = true;
+		outcome.gave_up = true;
+	}
+	outcome.cv.notify_all();
+}
+
+// One HTTP server bound to a single loopback address ("127.0.0.1" or "::1").
+// Binding is best-effort for both families: IsBound() reports whether it
+// succeeded, and RunLoginListenerLoop below decides what to do if neither
+// one did (see its class comment for why both families are attempted, and
+// what happens if both fail to bind).
+class LoopbackHttpServer {
+public:
+	LoopbackHttpServer(const std::string &host, int port) {
+		server_.set_read_timeout(CONNECTION_TIMEOUT_SECONDS, 0);
+		server_.set_write_timeout(CONNECTION_TIMEOUT_SECONDS, 0);
+		if (host.find(':') != std::string::npos) {
+			// Without this, some platforms (Linux) let the IPv6 socket also
+			// accept IPv4 connections, which would collide with the separate
+			// IPv4 socket bound to the same port.
+			server_.set_ipv6_v6only(true);
+		}
+		bound_ = server_.bind_to_port(host, port);
 	}
 
-	// Bind to loopback only - 127.0.0.1 and, best-effort, ::1 - not all
-	// interfaces, so this listener is never reachable from other machines on
-	// the network. IPv4 is required; see CreateLoopbackListener for why IPv6
-	// is also attempted.
-	socket_t server_fd_v4;
-	try {
-		server_fd_v4 = CreateLoopbackListener(AF_INET, port, /*required=*/true);
-	} catch (...) {
-		CleanupSockets();
-		throw;
+	~LoopbackHttpServer() {
+		Stop();
+		if (thread_.joinable()) {
+			thread_.join();
+		}
 	}
-	socket_t server_fd_v6 = CreateLoopbackListener(AF_INET6, port, /*required=*/false);
+
+	bool IsBound() const {
+		return bound_;
+	}
+
+	HttpServer &Handle() {
+		return server_;
+	}
+
+	// Starts accepting connections on a background thread and waits for the
+	// accept loop to actually be running before returning, so a caller that
+	// immediately calls Stop() (e.g. an early deadline/interrupt) can't race
+	// a thread that hasn't started listening yet.
+	void Start() {
+		if (!bound_) {
+			return;
+		}
+		thread_ = std::thread([this]() { server_.listen_after_bind(); });
+		server_.wait_until_ready();
+	}
+
+	void Stop() {
+		if (bound_) {
+			server_.stop();
+		}
+	}
+
+private:
+	HttpServer server_;
+	std::thread thread_;
+	bool bound_ = false;
+};
+
+// Drives the accept/poll/deadline/interrupt/paste-poll loop behind
+// RunLocalOAuthListener. Factored out from it (rather than inlined) so a
+// second flow can reuse this same driver later, supplying its own request
+// handling via `register_handlers`/`handle_pasted` instead of duplicating
+// the loop.
+//
+// Binds two servers - one on 127.0.0.1 (IPv4), one on ::1 (IPv6) - and
+// listens on whichever bind. macOS Safari resolves "localhost" to the IPv6
+// loopback address ahead of 127.0.0.1 and, unlike Chromium/Firefox, doesn't
+// reliably fall back to IPv4 when nothing answers there - so an IPv4-only
+// listener made the whole login flow silently fail in Safari even though the
+// redirect URI ("http://localhost:<port>") worked fine in other browsers.
+// Listening on both families sidesteps that without touching the redirect
+// URI (which must stay in sync with what's registered for the OAuth client).
+//
+// If neither family can bind at all (e.g. the port is already in use by
+// another concurrent login), this falls back to a listener-less, paste-only
+// mode rather than failing the whole flow outright - as long as a paste
+// fallback is actually available (stdin is an interactive terminal); if it
+// isn't, there would be no way to ever complete the login, so this throws
+// instead.
+std::string RunLoginListenerLoop(int port, const std::function<void()> &on_listening, int max_attempts,
+                                 const std::function<bool()> &is_interrupted,
+                                 const std::function<bool(std::string &)> &try_read_pasted_input,
+                                 const std::function<void(HttpServer &, ListenerOutcome &, int)> &register_handlers,
+                                 const std::function<bool(const std::string &, std::string &)> &handle_pasted) {
+	// Declared before v4/v6 (and therefore destroyed after them, since local
+	// variables are destroyed in reverse declaration order): both servers'
+	// handlers hold a reference to `outcome`, and run on background threads
+	// that LoopbackHttpServer's destructor stops and joins. If `outcome`
+	// were destroyed first, a handler still in flight during shutdown could
+	// touch it after it's gone.
+	ListenerOutcome outcome;
+	LoopbackHttpServer v4("127.0.0.1", port);
+	LoopbackHttpServer v6("::1", port);
+
+	if (!v4.IsBound() && !v6.IsBound()) {
+		if (!try_read_pasted_input) {
+			throw IOException("Failed to bind to port " + std::to_string(port) +
+			                  " (already in use?) and no paste fallback is available "
+			                  "(stdin isn't an interactive terminal)");
+		}
+		std::cerr << "Warning: could not bind to port " << port
+		          << " (already in use by another process?) - falling back to pasting the redirect URL manually.\n";
+	}
+
+	if (v4.IsBound()) {
+		register_handlers(v4.Handle(), outcome, max_attempts);
+	}
+	if (v6.IsBound()) {
+		register_handlers(v6.Handle(), outcome, max_attempts);
+	}
+
+	v4.Start();
+	v6.Start();
 
 	if (on_listening) {
 		on_listening();
 	}
 
-	// Any local process or open browser tab can connect to this listener, so
-	// a single connection can't be trusted to be the real OAuth redirect.
-	// Serve the redirect page to GETs and keep accepting connections until a
-	// POST carrying the correct `state` arrives (see ParseTokenPayload),
-	// ignoring anything else, up to a bounded number of attempts - and never
-	// longer than kOAuthListenerTimeoutSeconds wall-clock, even if no one ever
-	// connects at all.
-	auto close_listeners = [&]() {
-		CloseSocket(server_fd_v4);
-		if (server_fd_v6 != INVALID_SOCKET_VALUE) {
-			CloseSocket(server_fd_v6);
-		}
-	};
-
 	auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(kOAuthListenerTimeoutSeconds);
-	for (int attempt = 0; attempt < max_attempts;) {
+	while (true) {
+		{
+			std::unique_lock<std::mutex> lock(outcome.mtx);
+			bool signaled = outcome.cv.wait_for(lock, std::chrono::seconds(1), [&] { return outcome.done; });
+			if (signaled) {
+				if (outcome.gave_up) {
+					throw IOException("Timed out waiting for a valid OAuth callback");
+				}
+				return outcome.value;
+			}
+		}
+
 		if (std::chrono::steady_clock::now() >= deadline) {
-			break;
+			throw IOException("Timed out waiting for a valid OAuth callback");
 		}
 		if (is_interrupted && is_interrupted()) {
-			close_listeners();
-			CleanupSockets();
 			throw InterruptException();
 		}
 		if (try_read_pasted_input) {
 			std::string pasted_line;
 			if (try_read_pasted_input(pasted_line)) {
-				try {
-					std::string token = ExtractPastedToken(pasted_line, expected_state);
-					close_listeners();
-					CleanupSockets();
-					return token;
-				} catch (const Exception &e) {
-					// Not a usable paste (wrong/missing state, no token
-					// found) - keep waiting for either a corrected paste or
-					// the real browser redirect, same as an HTTP callback
-					// that fails ParseTokenPayload below.
-					std::cerr << "Ignoring pasted input: " << e.what() << '\n';
-					continue;
+				std::string result;
+				if (handle_pasted(pasted_line, result)) {
+					return result;
 				}
 			}
 		}
-		socket_t ready_fd = WaitForConnection(server_fd_v4, server_fd_v6, ACCEPT_POLL_SECONDS);
-		if (ready_fd == INVALID_SOCKET_VALUE) {
-			continue;
-		}
+	}
+}
 
-		socket_t client_socket = accept(ready_fd, nullptr, nullptr);
-		if (client_socket == INVALID_SOCKET_VALUE) {
-			attempt++;
-			continue;
-		}
-		attempt++;
+// The page served for the browser's GET after the OAuth redirect. Runs
+// client-side, in the browser, at the http://localhost:<port> origin: reads
+// the access_token/state out of the URL fragment (fragments are never sent
+// to any server) and POSTs them back to us, same-origin - so no CORS
+// headers are needed, or served, on either response.
+std::string BuildRedirectPageBody() {
+	return "<script>"
+	       "const hash = window.location.hash.substring(1);"
+	       "const params = new URLSearchParams(hash);"
+	       "const token = params.get('access_token');"
+	       "const state = params.get('state') || '';"
+	       "if (token) {"
+	       "  fetch('/', {"
+	       "    method: 'POST',"
+	       "    body: 'state=' + encodeURIComponent(state) + '&access_token=' + encodeURIComponent(token)"
+	       "  }).then(() => {"
+	       "    window.location.href = 'https://duckdb-gsheets.com/oauth#ready=1&access_token=success';"
+	       "  });"
+	       "}"
+	       "</script></body></html>";
+}
 
-		std::string request = ReadHttpRequest(client_socket);
+void RegisterImplicitGrantHandlers(HttpServer &server, ListenerOutcome &outcome, int max_attempts,
+                                   const std::string &expected_state) {
+	// Any GET (including a browser's favicon probe alongside the real
+	// redirect) gets served the same page; it's harmless, and the real
+	// redirect always is a GET too, since the token lives in the fragment
+	// (never sent to a server) until the page's own JS posts it below.
+	server.Get(".*",
+	           [](const HttpRequest &, HttpResponse &res) { res.set_content(BuildRedirectPageBody(), "text/html"); });
 
-		bool is_post = StartsWith(request, "POST ");
-		SendResponse(client_socket, is_post ? BuildAckResponse() : BuildRedirectPageResponse());
-		CloseSocket(client_socket);
-
-		if (!is_post) {
-			continue;
-		}
-
+	server.Post(".*", [&outcome, max_attempts, expected_state](const HttpRequest &req, HttpResponse &res) {
+		res.status = 200;
 		try {
-			std::string token = ParseTokenPayload(ExtractHttpBody(request), expected_state);
-			close_listeners();
-			CleanupSockets();
-			return token;
+			std::string token = ParseTokenPayload(req.body, expected_state);
+			SignalSuccess(outcome, token);
 		} catch (const Exception &) {
 			// Not our callback (wrong/missing state, malformed body, or a
 			// stray request) - keep waiting for the real one.
-			continue;
+			SignalFailedAttempt(outcome, max_attempts);
 		}
-	}
+	});
+}
 
-	close_listeners();
-	CleanupSockets();
-	throw IOException("Timed out waiting for a valid OAuth callback");
+bool HandlePastedImplicitGrantToken(const std::string &pasted_line, const std::string &expected_state,
+                                    std::string &out_token) {
+	try {
+		out_token = ExtractPastedToken(pasted_line, expected_state);
+		return true;
+	} catch (const Exception &e) {
+		// Not a usable paste (wrong/missing state, no token found) - keep
+		// waiting for either a corrected paste or the real browser redirect,
+		// same as an HTTP callback that fails ParseTokenPayload above.
+		std::cerr << "Ignoring pasted input: " << e.what() << '\n';
+		return false;
+	}
+}
+
+} // namespace
+
+std::string RunLocalOAuthListener(int port, const std::string &expected_state,
+                                  const std::function<void()> &on_listening, int max_attempts,
+                                  const std::function<bool()> &is_interrupted,
+                                  const std::function<bool(std::string &)> &try_read_pasted_input) {
+	return RunLoginListenerLoop(
+	    port, on_listening, max_attempts, is_interrupted, try_read_pasted_input,
+	    [&expected_state](HttpServer &server, ListenerOutcome &outcome, int attempts) {
+		    RegisterImplicitGrantHandlers(server, outcome, attempts, expected_state);
+	    },
+	    [&](const std::string &pasted_line, std::string &out_token) {
+		    return HandlePastedImplicitGrantToken(pasted_line, expected_state, out_token);
+	    });
 }
 
 } // namespace sheets

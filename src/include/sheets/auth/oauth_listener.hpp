@@ -15,13 +15,7 @@ constexpr int kOAuthListenerTimeoutSeconds = 300;
 // Builds the Google OAuth2 authorization URL. Pure/side-effect-free so it can
 // be unit tested without any network or browser involved.
 std::string BuildAuthorizationUrl(const std::string &auth_url, const std::string &client_id,
-                                   const std::string &redirect_uri, const std::string &scope,
-                                   const std::string &state);
-
-// Extracts the body of a raw HTTP request (everything after the blank line
-// separating headers from body). Returns an empty string if the request has
-// no body. Pure/side-effect-free.
-std::string ExtractHttpBody(const std::string &raw_request);
+                                  const std::string &redirect_uri, const std::string &scope, const std::string &state);
 
 // Parses the "state=<state>&access_token=<token>" payload the redirect
 // page's JS posts back, and validates `state` against `expected_state` -
@@ -63,9 +57,8 @@ std::string ExtractPastedToken(const std::string &pasted, const std::string &exp
 // RunLocalOAuthListener polls in production, so pasting a token can be
 // offered alongside the local listener without ever blocking on
 // std::cin - which matters because that polling happens on the same loop
-// that also services the listener socket(s), with no separate thread left
-// behind to race the DuckDB CLI's own prompt for stdin once this call
-// returns.
+// that also services the listener, with no separate thread left behind to
+// race the DuckDB CLI's own prompt for stdin once this call returns.
 //
 // Callers should only wire this up when stdin is a real interactive
 // terminal (isatty). Any line here is treated as a paste attempt, and an
@@ -75,28 +68,34 @@ std::string ExtractPastedToken(const std::string &pasted, const std::string &exp
 // this would instead consume and discard the next line of the script.
 bool TryReadPastedLine(std::string &line);
 
-// Runs a short-lived local HTTP listener on `port`, bound to loopback only,
-// so the OAuth redirect (see BuildAuthorizationUrl's redirect_uri) can hand
-// back the access token automatically, without the user having to
-// copy/paste it. Blocks until a payload passing ParseTokenPayload is
-// received (or the attempt budget is exhausted). `on_listening`, if set, is
-// invoked once the socket is bound and listening, before the call blocks on
-// accept() - production code uses it to open the browser only once the
-// server is actually ready; tests use it to know when it's safe to connect.
-// `max_attempts` bounds how many connections it will accept/inspect before
-// giving up (exposed mainly so tests don't have to wait through the full
-// production budget to exercise the timeout path). It also gives up after a
-// fixed wall-clock deadline regardless of `max_attempts`, so a browser that
-// never completes the redirect (headless environment, abandoned flow, etc.)
-// can't leave the caller blocked forever.
+// Runs a short-lived local HTTP listener on `port`, bound to loopback only
+// (127.0.0.1 and, best-effort, ::1 - see the .cpp for why both), so the
+// OAuth redirect (see BuildAuthorizationUrl's redirect_uri) can hand back the
+// access token automatically, without the user having to copy/paste it.
+// Blocks until a payload passing ParseTokenPayload is received (or the
+// attempt budget is exhausted). `on_listening`, if set, is invoked once the
+// server is bound and ready to accept connections (or, if binding failed on
+// every loopback family and a paste fallback is available, once that
+// degraded paste-only mode has been entered instead) - production code uses
+// it to open the browser only once the server is actually ready; tests use
+// it to know when it's safe to connect.
 //
-// `is_interrupted`, if set, is polled about once a second (whenever the
-// accept-loop's connection wait times out) - production code wires this to
-// ClientContext::IsInterrupted() so Ctrl+C can actually cancel a pending
-// login instead of the whole CLI appearing to hang until the 5-minute
-// timeout, since this call otherwise blocks the query-execution thread
-// without ever yielding back to DuckDB's normal cancellation/EOF handling.
-// Throws InterruptException as soon as it's observed set.
+// `max_attempts` bounds how many callbacks that fail validation (wrong/
+// missing state, malformed payload) this will tolerate before giving up -
+// exposed mainly so tests don't have to wait through the full production
+// budget to exercise the timeout path. A stray request that isn't even a
+// callback attempt (e.g. a GET before the POST in the implicit-grant flow)
+// doesn't count against this. It also gives up after a fixed wall-clock
+// deadline regardless of `max_attempts`, so a browser that never completes
+// the redirect (headless environment, abandoned flow, etc.) can't leave the
+// caller blocked forever.
+//
+// `is_interrupted`, if set, is polled about once a second. Production code
+// wires this to ClientContext::IsInterrupted() so Ctrl+C can actually cancel
+// a pending login instead of the whole CLI appearing to hang until the
+// 5-minute timeout, since this call otherwise blocks the query-execution
+// thread without ever yielding back to DuckDB's normal cancellation/EOF
+// handling. Throws InterruptException as soon as it's observed set.
 //
 // `try_read_pasted_input`, if set, is also polled about once a second: it
 // should return false immediately if nothing is available (production code
@@ -107,11 +106,12 @@ bool TryReadPastedLine(std::string &line);
 // listener keeps waiting for either a corrected paste or the real browser
 // redirect - this is what lets pasting a token work as an alternative to the
 // local listener actually receiving the redirect, e.g. when DuckDB runs on a
-// remote host the browser can't reach back into.
+// remote host the browser can't reach back into, or when the local port
+// couldn't be bound at all (see above).
 std::string RunLocalOAuthListener(int port, const std::string &expected_state,
-                                   const std::function<void()> &on_listening = nullptr, int max_attempts = 20,
-                                   const std::function<bool()> &is_interrupted = nullptr,
-                                   const std::function<bool(std::string &)> &try_read_pasted_input = nullptr);
+                                  const std::function<void()> &on_listening = nullptr, int max_attempts = 20,
+                                  const std::function<bool()> &is_interrupted = nullptr,
+                                  const std::function<bool(std::string &)> &try_read_pasted_input = nullptr);
 
 } // namespace sheets
 } // namespace duckdb

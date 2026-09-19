@@ -9,13 +9,8 @@ get_filename_component(EXT_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
 # Find OpenSSL (required for ServiceAccountAuth)
 find_package(OpenSSL REQUIRED)
 
-# Find Threads (required for the OAuth listener integration test)
-set(THREADS_PREFER_PTHREAD_FLAG ON)
-find_package(Threads REQUIRED)
-
 # Include paths
 include_directories(${EXT_ROOT}/duckdb/third_party/catch)
-include_directories(${EXT_ROOT}/duckdb/third_party/httplib)
 include_directories(${EXT_ROOT}/duckdb/src/include)
 include_directories(${EXT_ROOT}/src/include)
 include_directories(${EXT_ROOT}/third_party)
@@ -33,9 +28,14 @@ set(UNIT_TEST_SOURCES
     ${EXT_ROOT}/src/sheets/auth/bearer_token_auth.cpp
     ${EXT_ROOT}/src/sheets/auth/oauth_auth.cpp
     ${EXT_ROOT}/src/sheets/auth/service_account_auth.cpp
-    # OAuth listener tests (local HTTP listener used by the no-copy-paste OAuth flow)
-    sheets/auth/test_oauth_listener.cpp
-    ${EXT_ROOT}/src/sheets/auth/oauth_listener.cpp
+    # oauth_listener.cpp and its tests (sheets/auth/test_oauth_listener.cpp) are
+    # intentionally NOT built here: oauth_listener.cpp is built on
+    # httplib::Server, which pulls in DuckDB's re2 regex wrapper and
+    # Exception-formatting machinery - dependencies this standalone,
+    # no-full-DuckDB-build unit test target doesn't otherwise need and isn't set
+    # up to link. They're built and run instead as part of the full extension
+    # build - see test/integration/CMakeLists.txt and `make
+    # test_oauth_listener`.
     # Transport (needed for auth tests)
     ${EXT_ROOT}/src/sheets/transport/http_client.cpp
     ${EXT_ROOT}/src/sheets/transport/mock_http_client.cpp
@@ -52,19 +52,12 @@ set(UNIT_TEST_SOURCES
     # Client tests
     sheets/test_client.cpp
     # Utils (needed for client)
-    ${EXT_ROOT}/src/utils/version.cpp
-)
+    ${EXT_ROOT}/src/utils/version.cpp)
 
 add_executable(unit_tests ${UNIT_TEST_SOURCES})
 
-# Link OpenSSL and Threads
-target_link_libraries(unit_tests OpenSSL::SSL OpenSSL::Crypto Threads::Threads)
-
-# Winsock (required by the OAuth listener on Windows; #pragma comment covers
-# MSVC, but this makes it explicit for other Windows toolchains/generators)
-if(WIN32)
-    target_link_libraries(unit_tests ws2_32)
-endif()
+# Link OpenSSL
+target_link_libraries(unit_tests OpenSSL::SSL OpenSSL::Crypto)
 
 # Enable testing
 enable_testing()
