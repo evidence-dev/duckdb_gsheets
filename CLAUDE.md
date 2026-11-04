@@ -6,6 +6,7 @@ DuckDB extension for reading and writing Google Sheets.
 
 - **Build:** `GEN=ninja make`
 - **Unit tests:** `make test_unit`
+- **OAuth listener tests:** `make test_oauth_listener` (builds the full extension - can't be standalone, see test/integration/CMakeLists.txt)
 - **SQL tests:** `TOKEN=your-token make test` or `./scripts/test_sql.sh path/to/keyfile.json`
 - **Format:** `make format`
 

@@ -29,7 +29,6 @@ bool A1Range::IsValid() {
 	while (*ptr) {
 		char c = *ptr;
 		switch (state) {
-
 		case START:
 			if (c == '\'') {
 				state = SHEET_NAME_QUOTED;

@@ -1,0 +1,45 @@
+# name: test/sql/oauth_refresh_token.test
+# description: test CREATE SECRET with PROVIDER oauth and a REFRESH_TOKEN (no browser login, no network access)
+# group: [sql]
+
+require gsheets
+
+# A refresh token is useless without the OAuth client it was issued to
+statement error
+CREATE SECRET (TYPE gsheet, PROVIDER oauth, REFRESH_TOKEN 'x');
+----
+Binder Error: refresh_token requires both client_id and client_secret to also be provided
+
+statement error
+CREATE SECRET (TYPE gsheet, PROVIDER oauth, CLIENT_ID 'id', REFRESH_TOKEN 'x');
+----
+Binder Error: refresh_token requires both client_id and client_secret to also be provided
+
+statement error
+CREATE SECRET (TYPE gsheet, PROVIDER oauth, CLIENT_SECRET 'secret', REFRESH_TOKEN 'x');
+----
+Binder Error: refresh_token requires both client_id and client_secret to also be provided
+
+# With all three values it succeeds without starting the browser login
+statement ok
+CREATE SECRET refresh_secret (
+    TYPE gsheet,
+    PROVIDER oauth,
+    CLIENT_ID 'my-client-id',
+    CLIENT_SECRET 'my-client-secret',
+    REFRESH_TOKEN 'my-refresh-token'
+);
+
+# The refresh token and client secret are redacted; no token is stored yet
+query IIIIII
+SELECT
+    secret_string LIKE '%refresh_token=redacted%',
+    secret_string LIKE '%client_secret=redacted%',
+    secret_string LIKE '%client_id=my-client-id%',
+    secret_string LIKE '%interactive_reauth=false%',
+    secret_string LIKE '%my-refresh-token%' OR secret_string LIKE '%my-client-secret%',
+    secret_string LIKE '%;token=%'
+FROM duckdb_secrets()
+WHERE name = 'refresh_secret';
+----
+true	true	true	true	false	false

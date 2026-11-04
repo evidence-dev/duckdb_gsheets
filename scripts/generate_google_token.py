@@ -15,9 +15,7 @@ SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 
 
 def get_token(key_file_path: str) -> str:
-    credentials = service_account.Credentials.from_service_account_file(
-        key_file_path, scopes=SCOPES
-    )
+    credentials = service_account.Credentials.from_service_account_file(key_file_path, scopes=SCOPES)
     credentials.refresh(Request())
     return credentials.token
 

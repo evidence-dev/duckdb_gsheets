@@ -16,7 +16,8 @@ duckdb_gsheets/
 │   └── *.cpp                   # Extension entry points (read, copy, auth)
 ├── test/
 │   ├── sql/                    # SQL logic tests (integration, requires credentials)
-│   └── unit/                   # C++ unit tests (standalone, no credentials needed)
+│   ├── unit/                   # C++ unit tests (standalone, no credentials needed)
+│   └── integration/            # C++ tests that need the full extension build (no credentials needed)
 ├── scripts/                    # Dev scripts (test runners, token generation)
 ├── docs/                       # Documentation site
 ├── .github/workflows/          # CI pipelines
@@ -64,6 +65,30 @@ Unit tests are standalone C++ tests that use a mock HTTP client — no credentia
 make test_unit
 ```
 
+### OAuth listener tests
+
+`src/sheets/auth/oauth_listener.cpp` (the local HTTP listener used by the browser-based OAuth login flow) is built on `httplib::Server`, which pulls in DuckDB's re2 regex wrapper and Exception-formatting machinery - dependencies the standalone unit test target above deliberately avoids linking. Its tests live in `test/integration/` instead, built as part of the full extension build. No credentials or network access needed - it drives the real listener over real loopback TCP connections:
+
+```sh
+make test_oauth_listener
+```
+
+### COPY TO tests
+
+`test/integration/test_copy_function.cpp` runs `COPY ... TO` through DuckDB's own execution paths (ordered, batched, parallel and empty) with the `gsheet_write` callback set, swapping only the callbacks that call the Sheets API for stubs that record the rows. A callback the engine requires but the copy function leaves unset fails here, without credentials or network access:
+
+```sh
+make test_copy_function
+```
+
+### Auth factory tests
+
+`test/integration/test_auth_factory.cpp` creates real `gsheet` secrets and builds the auth provider from them with `CreateAuthFromSecret`, with a mock standing in for Google's token endpoint. It checks, for example, that a secret given a `REFRESH_TOKEN` fails with an error when that token is revoked instead of starting the browser login. No credentials or network access needed:
+
+```sh
+make test_auth_factory
+```
+
 ### SQL tests
 
 SQL tests run against the real Google Sheets API and require credentials. There are two ways to run them:
@@ -100,13 +125,17 @@ The CI pipeline gates builds behind tests:
 graph LR
     A[push / pull_request] --> B[Unit Tests]
     B --> C[SQL Tests]
+    B --> F[OAuth Listener Tests]
     C --> D[Build next]
     C --> E[Build stable]
+    F --> D
+    F --> E
 ```
 
 - **Unit tests** — always run, no credentials needed
+- **OAuth listener tests** — always run in parallel with SQL tests, no credentials needed (builds the full extension - see `make test_oauth_listener`); the same job runs the COPY TO tests (`make test_copy_function`) and the auth factory tests (`make test_auth_factory`)
 - **SQL tests** — require `GSHEETS_KEY_FILE_JSON` repo secret; skip gracefully on fork PRs without credentials
-- **Distribution builds** — only start after both test stages pass
+- **Distribution builds** — only start after all test stages pass
 
 For fork PRs, maintainers can manually trigger SQL tests via **Actions → SQL Tests → Run workflow**.
 

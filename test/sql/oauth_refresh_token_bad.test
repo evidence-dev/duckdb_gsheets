@@ -1,0 +1,24 @@
+# name: test/sql/oauth_refresh_token_bad.test
+# description: test that a bad REFRESH_TOKEN fails read_gsheet with an error instead of starting the browser login
+# group: [sql]
+
+# Calls Google's token endpoint, so only runs alongside the other credentialed SQL tests
+require-env TOKEN
+
+require gsheets
+
+statement ok
+CREATE SECRET bad_refresh_secret (
+    TYPE gsheet,
+    PROVIDER oauth,
+    CLIENT_ID 'not-a-real-client-id',
+    CLIENT_SECRET 'not-a-real-client-secret',
+    REFRESH_TOKEN 'not-a-real-refresh-token'
+);
+
+# Fails at the refresh itself. If this opened the login instead, the test would
+# hang until the listener times out.
+statement error
+FROM read_gsheet('11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8', header=true);
+----
+OAuth token refresh failed

@@ -17,7 +17,14 @@ jobs:
           submodules: recursive
 
       - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y ninja-build libssl-dev
+        run: sudo apt-get update && sudo apt-get install -y ninja-build libssl-dev ccache
+
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@main
+        with:
+          key: ccache-unit-tests
 
       - name: Build and run unit tests
         run: make test_unit
+        env:
+          EXT_FLAGS: -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache

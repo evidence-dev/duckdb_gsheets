@@ -3,6 +3,10 @@
 
 #pragma once
 
+#include <mutex>
+#include <string>
+#include <vector>
+
 #include "duckdb/function/copy_function.hpp"
 
 #include "sheets/transport/http_client.hpp"
@@ -21,11 +25,17 @@ public:
 	std::unique_ptr<sheets::IAuthProvider> auth;
 	string spreadsheet_id;
 	string sheet_name;
+
+	//! Rows to write, header first. Sink only adds to this; Finalize sends it in as few requests as fit.
+	std::vector<std::vector<std::string>> rows;
+	//! Sink can run on several threads at once when insertion order is not preserved
+	std::mutex rows_lock;
 };
 
 struct GSheetWriteOptions {
 	vector<string> name_list;
 	std::string sheet;
+	std::string gid;
 	std::string range;
 	bool overwrite_sheet;
 	bool overwrite_range;
@@ -39,12 +49,13 @@ struct GSheetWriteBindData : public TableFunctionData {
 	vector<LogicalType> sql_types;
 
 	GSheetWriteBindData(string file_path, vector<LogicalType> sql_types, vector<string> names, std::string sheet,
-	                    std::string range, bool overwrite_sheet, bool overwrite_range, bool create_if_not_exists,
-	                    bool header)
+	                    std::string gid, std::string range, bool overwrite_sheet, bool overwrite_range,
+	                    bool create_if_not_exists, bool header)
 	    : sql_types(std::move(sql_types)) {
 		files.push_back(std::move(file_path));
 		options.name_list = std::move(names);
 		options.sheet = std::move(sheet);
+		options.gid = std::move(gid);
 		options.range = std::move(range);
 		options.overwrite_sheet = overwrite_sheet;
 		options.overwrite_range = overwrite_range;
@@ -55,10 +66,19 @@ struct GSheetWriteBindData : public TableFunctionData {
 
 class GSheetCopyFunction : public CopyFunction {
 public:
+	//! Name of the copy function that does the writing; "gsheet" rewrites COPY statements to it
+	static constexpr const char *WRITE_FORMAT = "gsheet_write";
+
 	GSheetCopyFunction();
 
+	//! The user-facing "gsheet" copy function, which only rewrites the statement for the writer
+	static CopyFunction GetPlanFunction();
+
+	static BoundStatement GSheetCopyPlan(Binder &binder, CopyStatement &stmt);
+
 	static unique_ptr<FunctionData> GSheetWriteBind(ClientContext &context, CopyFunctionBindInput &input,
-	                                                const vector<string> &names, const vector<LogicalType> &sql_types);
+	                                                const vector<Identifier> &names,
+	                                                const vector<LogicalType> &sql_types);
 
 	static unique_ptr<GlobalFunctionData> GSheetWriteInitializeGlobal(ClientContext &context, FunctionData &bind_data,
 	                                                                  const string &file_path);
@@ -68,6 +88,11 @@ public:
 
 	static void GSheetWriteSink(ExecutionContext &context, FunctionData &bind_data_p, GlobalFunctionData &gstate,
 	                            LocalFunctionData &lstate, DataChunk &input);
+
+	static void GSheetWriteCombine(ExecutionContext &context, FunctionData &bind_data, GlobalFunctionData &gstate,
+	                               LocalFunctionData &lstate);
+
+	static void GSheetWriteFinalize(ClientContext &context, FunctionData &bind_data, GlobalFunctionData &gstate);
 };
 
 } // namespace duckdb

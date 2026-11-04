@@ -24,9 +24,215 @@ TEST_CASE("BearerTokenAuth handles empty token", "[auth]") {
 // OAuthAuth Tests
 // =============================================================================
 
-TEST_CASE("OAuthAuth returns correct header", "[auth]") {
-	duckdb::sheets::OAuthAuth auth("oauth-access-token");
-	REQUIRE(auth.GetAuthorizationHeader() == "Bearer oauth-access-token");
+TEST_CASE("OAuthAuth exchanges the refresh_token for an access token", "[auth]") {
+	duckdb::sheets::MockHttpClient mockHttp;
+
+	duckdb::sheets::HttpResponse tokenResponse;
+	tokenResponse.statusCode = 200;
+	tokenResponse.body = R"({"access_token": "ya29.refreshed-token", "expires_in": 3600})";
+	mockHttp.AddResponse(tokenResponse);
+
+	duckdb::sheets::OAuthAuth auth(mockHttp, "my-refresh-token", "my-client-id", "my-client-secret");
+
+	std::string header = auth.GetAuthorizationHeader();
+	REQUIRE(header == "Bearer ya29.refreshed-token");
+
+	auto &requests = mockHttp.GetRecordedRequests();
+	REQUIRE(requests.size() == 1);
+	REQUIRE(requests[0].method == duckdb::sheets::HttpMethod::POST);
+	REQUIRE(requests[0].url == "https://oauth2.googleapis.com/token");
+	REQUIRE(requests[0].headers.at("Content-Type") == "application/x-www-form-urlencoded");
+	REQUIRE(requests[0].body.find("grant_type=refresh_token") != std::string::npos);
+	REQUIRE(requests[0].body.find("refresh_token=my-refresh-token") != std::string::npos);
+	REQUIRE(requests[0].body.find("client_id=my-client-id") != std::string::npos);
+	REQUIRE(requests[0].body.find("client_secret=my-client-secret") != std::string::npos);
+}
+
+TEST_CASE("OAuthAuth caches the access token", "[auth]") {
+	duckdb::sheets::MockHttpClient mockHttp;
+
+	duckdb::sheets::HttpResponse tokenResponse;
+	tokenResponse.statusCode = 200;
+	tokenResponse.body = R"({"access_token": "cached-token", "expires_in": 3600})";
+	mockHttp.AddResponse(tokenResponse);
+
+	duckdb::sheets::OAuthAuth auth(mockHttp, "refresh-token", "client-id", "client-secret");
+
+	std::string header1 = auth.GetAuthorizationHeader();
+	REQUIRE(header1 == "Bearer cached-token");
+	REQUIRE(mockHttp.GetRecordedRequests().size() == 1);
+
+	// Second call should use the cached token (no new request).
+	std::string header2 = auth.GetAuthorizationHeader();
+	REQUIRE(header2 == "Bearer cached-token");
+	REQUIRE(mockHttp.GetRecordedRequests().size() == 1);
+}
+
+TEST_CASE("OAuthAuth with no access token yet calls the token endpoint exactly once", "[auth]") {
+	// A secret created from a passed-in refresh_token has no access token at
+	// all: the first GetAuthorizationHeader mints one, and later calls reuse it.
+	duckdb::sheets::MockHttpClient mockHttp;
+
+	duckdb::sheets::HttpResponse tokenResponse;
+	tokenResponse.statusCode = 200;
+	tokenResponse.body = R"({"access_token": "first-token", "expires_in": 3600})";
+	mockHttp.AddResponse(tokenResponse);
+
+	duckdb::sheets::OAuthAuth auth(mockHttp, "passed-in-refresh-token", "client-id", "client-secret");
+	REQUIRE(mockHttp.GetRecordedRequests().empty());
+
+	REQUIRE(auth.GetAuthorizationHeader() == "Bearer first-token");
+	REQUIRE(auth.GetAuthorizationHeader() == "Bearer first-token");
+	REQUIRE(auth.GetAuthorizationHeader() == "Bearer first-token");
+
+	auto &requests = mockHttp.GetRecordedRequests();
+	REQUIRE(requests.size() == 1);
+	REQUIRE(requests[0].url == "https://oauth2.googleapis.com/token");
+	REQUIRE(requests[0].body.find("refresh_token=passed-in-refresh-token") != std::string::npos);
+}
+
+TEST_CASE("OAuthAuth throws on HTTP error", "[auth]") {
+	duckdb::sheets::MockHttpClient mockHttp;
+
+	duckdb::sheets::HttpResponse errorResponse;
+	errorResponse.statusCode = 400;
+	errorResponse.body = R"({"error": "invalid_grant"})";
+	mockHttp.AddResponse(errorResponse);
+
+	duckdb::sheets::OAuthAuth auth(mockHttp, "refresh-token", "client-id", "client-secret");
+
+	REQUIRE_THROWS_AS(auth.GetAuthorizationHeader(), duckdb::IOException);
+}
+
+TEST_CASE("OAuthAuth without a reauth callback throws OAuthInvalidGrantException on invalid_grant", "[auth]") {
+	duckdb::sheets::MockHttpClient mockHttp;
+
+	duckdb::sheets::HttpResponse errorResponse;
+	errorResponse.statusCode = 400;
+	errorResponse.body = R"({"error": "invalid_grant"})";
+	mockHttp.AddResponse(errorResponse);
+
+	duckdb::sheets::OAuthAuth auth(mockHttp, "refresh-token", "client-id", "client-secret");
+
+	REQUIRE_THROWS_AS(auth.GetAuthorizationHeader(), duckdb::sheets::OAuthInvalidGrantException);
+}
+
+TEST_CASE("OAuthAuth does not invoke the reauth callback on a non-invalid_grant error", "[auth]") {
+	duckdb::sheets::MockHttpClient mockHttp;
+
+	duckdb::sheets::HttpResponse errorResponse;
+	errorResponse.statusCode = 500;
+	errorResponse.body = R"({"error": "server_error"})";
+	mockHttp.AddResponse(errorResponse);
+
+	bool reauthCalled = false;
+	duckdb::sheets::OAuthAuth auth(mockHttp, "refresh-token", "client-id", "client-secret", [&]() {
+		reauthCalled = true;
+		duckdb::sheets::OAuthTokenResponse result;
+		result.access_token = "should-not-be-used";
+		result.refresh_token = "should-not-be-used";
+		result.expires_in = 3600;
+		return result;
+	});
+
+	REQUIRE_THROWS_AS(auth.GetAuthorizationHeader(), duckdb::IOException);
+	REQUIRE_FALSE(reauthCalled);
+}
+
+TEST_CASE("OAuthAuth re-authenticates via the callback on invalid_grant", "[auth]") {
+	duckdb::sheets::MockHttpClient mockHttp;
+
+	duckdb::sheets::HttpResponse errorResponse;
+	errorResponse.statusCode = 400;
+	errorResponse.body = R"({"error": "invalid_grant"})";
+	mockHttp.AddResponse(errorResponse);
+
+	bool reauthCalled = false;
+	duckdb::sheets::OAuthAuth auth(mockHttp, "dead-refresh-token", "client-id", "client-secret", [&]() {
+		reauthCalled = true;
+		duckdb::sheets::OAuthTokenResponse result;
+		result.access_token = "fresh-access-token";
+		result.refresh_token = "fresh-refresh-token";
+		result.expires_in = 3600;
+		return result;
+	});
+
+	std::string header = auth.GetAuthorizationHeader();
+	REQUIRE(reauthCalled);
+	REQUIRE(header == "Bearer fresh-access-token");
+
+	// Only the one failed refresh request hit the token endpoint - the
+	// reauth callback is responsible for its own (mocked-away) HTTP work.
+	REQUIRE(mockHttp.GetRecordedRequests().size() == 1);
+
+	// The refreshed token is now cached, so a second call neither refreshes
+	// nor re-authenticates again.
+	std::string header2 = auth.GetAuthorizationHeader();
+	REQUIRE(header2 == "Bearer fresh-access-token");
+	REQUIRE(mockHttp.GetRecordedRequests().size() == 1);
+}
+
+TEST_CASE("OAuthAuth propagates the reauth callback's failure and re-throws on the next call", "[auth]") {
+	duckdb::sheets::MockHttpClient mockHttp;
+
+	duckdb::sheets::HttpResponse errorResponse;
+	errorResponse.statusCode = 400;
+	errorResponse.body = R"({"error": "invalid_grant"})";
+	mockHttp.AddResponse(errorResponse);
+	mockHttp.AddResponse(errorResponse);
+
+	duckdb::sheets::OAuthAuth auth(
+	    mockHttp, "dead-refresh-token", "client-id", "client-secret",
+	    [&]() -> duckdb::sheets::OAuthTokenResponse { throw duckdb::IOException("user cancelled login"); });
+
+	REQUIRE_THROWS_AS(auth.GetAuthorizationHeader(), duckdb::IOException);
+	// The failed reauth attempt must not leave the instance stuck thinking a
+	// refresh is still in-flight (see the refreshing/refreshCv bookkeeping) -
+	// a later call should be able to try again rather than hang.
+	REQUIRE_THROWS_AS(auth.GetAuthorizationHeader(), duckdb::IOException);
+}
+
+TEST_CASE("OAuthAuth throws on missing access_token", "[auth]") {
+	duckdb::sheets::MockHttpClient mockHttp;
+
+	duckdb::sheets::HttpResponse badResponse;
+	badResponse.statusCode = 200;
+	badResponse.body = R"({"token_type": "Bearer"})"; // Missing access_token
+	mockHttp.AddResponse(badResponse);
+
+	duckdb::sheets::OAuthAuth auth(mockHttp, "refresh-token", "client-id", "client-secret");
+
+	REQUIRE_THROWS_AS(auth.GetAuthorizationHeader(), duckdb::IOException);
+}
+
+TEST_CASE("OAuthAuth throws on invalid JSON", "[auth]") {
+	duckdb::sheets::MockHttpClient mockHttp;
+
+	duckdb::sheets::HttpResponse badResponse;
+	badResponse.statusCode = 200;
+	badResponse.body = "not valid json";
+	mockHttp.AddResponse(badResponse);
+
+	duckdb::sheets::OAuthAuth auth(mockHttp, "refresh-token", "client-id", "client-secret");
+
+	REQUIRE_THROWS_AS(auth.GetAuthorizationHeader(), duckdb::IOException);
+}
+
+TEST_CASE("OAuthAuth throws IOException (not an uncaught json::type_error) on a wrong-typed field", "[auth]") {
+	// A 200 response whose access_token is present but the wrong JSON type
+	// (null here) must still produce the same clean IOException as a parse
+	// failure, not an uncaught nlohmann::json::type_error escaping from
+	// .get<std::string>().
+	duckdb::sheets::MockHttpClient mockHttp;
+
+	duckdb::sheets::HttpResponse badResponse;
+	badResponse.statusCode = 200;
+	badResponse.body = R"({"access_token": null, "expires_in": 3600})";
+	mockHttp.AddResponse(badResponse);
+
+	duckdb::sheets::OAuthAuth auth(mockHttp, "refresh-token", "client-id", "client-secret");
+
+	REQUIRE_THROWS_AS(auth.GetAuthorizationHeader(), duckdb::IOException);
 }
 
 // =============================================================================

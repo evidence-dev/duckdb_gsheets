@@ -53,7 +53,6 @@ HttpResponse HttpLibClient::Execute(const HttpRequest &request) {
 	duckdb_httplib_openssl::Result result;
 
 	switch (request.method) {
-
 	case HttpMethod::GET:
 		result = client.Get(path, headers);
 		break;

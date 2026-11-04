@@ -95,8 +95,8 @@ TEST_CASE("A1Range validates absolute references in ranges", "[range]") {
 	REQUIRE(A1Range("$A$1:$B$2").IsValid());
 	REQUIRE(A1Range("$A1:B$2").IsValid());
 	REQUIRE(A1Range("A$1:$B2").IsValid());
-	REQUIRE(A1Range("$A:$B").IsValid());       // Absolute column range
-	REQUIRE(A1Range("$A$1:B2").IsValid());     // Mixed: first absolute, second relative
+	REQUIRE(A1Range("$A:$B").IsValid());   // Absolute column range
+	REQUIRE(A1Range("$A$1:B2").IsValid()); // Mixed: first absolute, second relative
 }
 
 TEST_CASE("A1Range validates absolute references with sheet names", "[range]") {
@@ -106,12 +106,12 @@ TEST_CASE("A1Range validates absolute references with sheet names", "[range]") {
 }
 
 TEST_CASE("A1Range rejects invalid absolute reference syntax", "[range]") {
-	REQUIRE_FALSE(A1Range("$$A1").IsValid());    // Double dollar before column
-	REQUIRE_FALSE(A1Range("A$$1").IsValid());    // Double dollar before row
-	REQUIRE_FALSE(A1Range("$1").IsValid());      // Dollar with just row (no column)
-	REQUIRE_FALSE(A1Range("$").IsValid());       // Just dollar
-	REQUIRE_FALSE(A1Range("A1$").IsValid());     // Trailing dollar
-	REQUIRE_FALSE(A1Range("$:A").IsValid());     // Dollar before colon
+	REQUIRE_FALSE(A1Range("$$A1").IsValid()); // Double dollar before column
+	REQUIRE_FALSE(A1Range("A$$1").IsValid()); // Double dollar before row
+	REQUIRE_FALSE(A1Range("$1").IsValid());   // Dollar with just row (no column)
+	REQUIRE_FALSE(A1Range("$").IsValid());    // Just dollar
+	REQUIRE_FALSE(A1Range("A1$").IsValid());  // Trailing dollar
+	REQUIRE_FALSE(A1Range("$:A").IsValid());  // Dollar before colon
 }
 
 // =============================================================================

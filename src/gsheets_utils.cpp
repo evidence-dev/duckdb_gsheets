@@ -1,3 +1,5 @@
+#include <cctype>
+#include <iomanip>
 #include <random>
 #include <regex>
 #include <sstream>
@@ -70,15 +72,34 @@ std::string generate_random_string(size_t length) {
 std::string url_encode(const std::string &str) {
 	std::string encoded;
 	for (char c : str) {
-		if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
+		unsigned char uc = static_cast<unsigned char>(c);
+		if (isalnum(uc) || c == '-' || c == '_' || c == '.' || c == '~') {
 			encoded += c;
 		} else {
 			std::stringstream ss;
-			ss << std::hex << std::uppercase << static_cast<int>(static_cast<unsigned char>(c));
+			ss << std::hex << std::uppercase << std::setfill('0') << std::setw(2) << static_cast<int>(uc);
 			encoded += '%' + ss.str();
 		}
 	}
 	return encoded;
+}
+
+std::string url_decode(const std::string &str) {
+	std::string decoded;
+	decoded.reserve(str.size());
+	for (size_t i = 0; i < str.size(); i++) {
+		if (str[i] == '%' && i + 2 < str.size() && isxdigit(static_cast<unsigned char>(str[i + 1])) &&
+		    isxdigit(static_cast<unsigned char>(str[i + 2]))) {
+			int value = std::stoi(str.substr(i + 1, 2), nullptr, 16);
+			decoded += static_cast<char>(value);
+			i += 2;
+		} else if (str[i] == '+') {
+			decoded += ' ';
+		} else {
+			decoded += str[i];
+		}
+	}
+	return decoded;
 }
 
 } // namespace duckdb

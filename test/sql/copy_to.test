@@ -1,6 +1,6 @@
 # name: test/sql/copy_to.test
 # description: test COPY TO function
-# group: [gsheets]
+# group: [sql]
 
 require-env TOKEN
 
@@ -89,3 +89,9 @@ Microsoft	Excel	1985
 Google	Google Sheets	2006
 Apple	Numbers	1984
 LibreOffice	Calc	2000
+
+# A non-numeric gid option is reported as invalid input, not a raw stoi error
+statement error
+copy spreadsheets to '11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8' (format gsheet, gid 'abc');
+----
+Cannot convert sheet ID abc to integer

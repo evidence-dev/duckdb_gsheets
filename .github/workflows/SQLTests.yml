@@ -51,10 +51,17 @@ jobs:
 
       - name: Install dependencies
         if: steps.check-creds.outputs.skip == 'false'
-        run: sudo apt-get update && sudo apt-get install -y ninja-build libssl-dev
+        run: sudo apt-get update && sudo apt-get install -y ninja-build libssl-dev ccache
+
+      - name: Setup ccache
+        if: steps.check-creds.outputs.skip == 'false'
+        uses: hendrikmuhs/ccache-action@main
+        with:
+          key: ccache-sql-tests
 
       - name: Run SQL tests
         if: steps.check-creds.outputs.skip == 'false'
         run: ./scripts/test_sql.sh /tmp/gsheets_key_file.json
         env:
           GEN: ninja
+          EXT_FLAGS: -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache

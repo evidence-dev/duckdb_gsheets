@@ -1,6 +1,6 @@
-# name: test/sql/copy_to.test
+# name: test/sql/copy_to_range_flags.test
 # description: test COPY TO function
-# group: [gsheets]
+# group: [sql]
 
 require-env TOKEN
 

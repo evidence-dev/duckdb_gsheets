@@ -33,6 +33,23 @@ The latest version of [DuckDB](https://duckdb.org/docs/installation) (currently 
 -- Authenticate with Google Account in the browser (default)
 CREATE SECRET (TYPE gsheet);
 
+-- The default flow above issues a short-lived access token only: once it
+-- expires (about an hour) or DuckDB restarts, you'll need to log in again.
+-- To get a secret that silently re-authenticates itself instead, register
+-- your own OAuth client in Google Cloud Console (Desktop app type; no
+-- redirect URI needs to be added - loopback addresses are allowed
+-- automatically) and supply both its client ID and client secret:
+CREATE SECRET (
+    TYPE gsheet,
+    PROVIDER oauth,
+    CLIENT_ID '<your_oauth_client_id>',
+    CLIENT_SECRET '<your_oauth_client_secret>'
+);
+
+-- You can also supply just CLIENT_ID (no CLIENT_SECRET) to use your own
+-- OAuth app with the default browser login above, without gaining
+-- re-authentication.
+
 
 -- OR create a secret with your Google API access token (boring, see below guide)
 CREATE SECRET (

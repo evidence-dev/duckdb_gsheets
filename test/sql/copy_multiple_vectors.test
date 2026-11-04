@@ -1,6 +1,6 @@
 # name: test/sql/copy_multiple_vectors.test
 # description: test COPY TO function
-# group: [gsheets]
+# group: [sql]
 
 require-env TOKEN
 
@@ -10046,3 +10046,24 @@ from read_gsheet('https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8
 9997
 9998
 9999
+
+# An ORDER BY query goes through DuckDB's batched copy path, which must keep row order
+statement ok
+copy (
+    select 'Microsoft' as company, 'Excel' as product, 1985 as year_founded
+    union all
+    select 'Google', 'Google Sheets', 2006
+    union all
+    select 'Apple', 'Numbers', 1984
+    union all
+    select 'LibreOffice', 'Calc', 2000
+    order by year_founded)
+to 'https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8/edit?gid=295324039#gid=295324039' (format gsheet);
+
+query III
+from read_gsheet('https://docs.google.com/spreadsheets/d/11QdEasMWbETbFVxry-SsD8jVcdYIT1zBQszcF84MdE8/edit?gid=295324039#gid=295324039');
+----
+Apple	Numbers	1984
+Microsoft	Excel	1985
+LibreOffice	Calc	2000
+Google	Google Sheets	2006

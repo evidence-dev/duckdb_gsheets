@@ -1,16 +1,137 @@
 #include <fstream>
+#include <functional>
+#include <iostream>
+#include <mutex>
 #include <cstdlib>
 #include <json.hpp>
 
+#ifdef _WIN32
+#include <io.h>
+#else
+#include <unistd.h>
+#endif
+
 #include "duckdb/common/exception/binder_exception.hpp"
+#include "duckdb/main/client_context.hpp"
 
 #include "gsheets_auth.hpp"
 #include "gsheets_utils.hpp"
+#include "sheets/auth/oauth_listener.hpp"
+#include "sheets/auth/oauth_token_exchange.hpp"
+#include "sheets/transport/client_factory.hpp"
+#include "sheets/transport/http_type.hpp"
 #include "utils/options.hpp"
 
 using json = nlohmann::json;
 
 namespace duckdb {
+
+// Both InitiateOAuthFlow and RunOAuthCodeFlow bind their local redirect
+// listener on this same hardcoded port (see PORT in each) - it has to be
+// fixed, since it's baked into the redirect_uri registered for the OAuth
+// client. Two logins can't listen on it at once, so every login (whichever
+// flow, whichever client_id/secret) serializes through this mutex; auto
+// reauth (auth_factory.cpp's reauth callback) makes concurrent attempts
+// realistic where before this was only a rare, explicit user action.
+static std::mutex oauth_local_listener_mutex;
+
+// Whether stdin is a real interactive terminal rather than a pipe/redirect
+// (e.g. `duckdb < script.sql`, or the extension embedded in some other
+// process's stdin). The paste-a-token fallback below must only be offered
+// when this is true: TryReadPastedLine treats any line it reads as a paste
+// attempt, so on a non-interactive stdin it would instead consume and
+// discard whatever the caller's own script/pipe was about to feed in next.
+static bool IsStdinInteractive() {
+#ifdef _WIN32
+	return _isatty(_fileno(stdin)) != 0;
+#else
+	return isatty(fileno(stdin)) != 0;
+#endif
+}
+
+// The extension's built-in OAuth client, used unless the caller supplies
+// their own via the `client_id` secret parameter (see
+// CreateGsheetSecretFromOAuth). No client_secret is embedded for it: it
+// only ever drives the implicit-grant flow below, which needs none. Callers
+// who want a refresh_token - or who pass in one they already have - must
+// bring their own client_id *and* client_secret.
+static const std::string kDefaultOAuthClientId =
+    "793766532675-rehqgocfn88h0nl88322ht6d1i12kl4e.apps.googleusercontent.com";
+
+// The callbacks RunLocalOAuthListener/RunLocalOAuthCodeListener need to open
+// the user's browser, let Ctrl+C cancel a pending login, and (on an
+// interactive terminal) accept a pasted fallback - identical machinery for
+// both the implicit-grant and authorization-code flows, which only differ
+// in the URL opened and, for the paste hint, what's being pasted.
+struct LoginCallbacks {
+	std::function<void()> open_browser;
+	std::function<bool()> is_interrupted;
+	std::function<bool(std::string &)> try_read_pasted_input;
+};
+
+static LoginCallbacks PrepareLoginCallbacks(ClientContext &context, const std::string &auth_request_url,
+                                            const std::string &paste_hint_suffix) {
+	// Only offer (and later poll for) the paste fallback when stdin is a
+	// real interactive terminal - see IsStdinInteractive.
+	bool stdin_interactive = IsStdinInteractive();
+
+	// Open the browser only once the listener is actually ready to receive
+	// the redirect (RunLocalOAuthListener/RunLocalOAuthCodeListener invoke
+	// this after they start listening).
+	auto open_browser = [auth_request_url, stdin_interactive, paste_hint_suffix]() {
+		bool should_open_browser = true;
+
+#ifdef __linux__
+		// On Linux, check for a headless environment to avoid xdg-open erroring out.
+		const char *display = std::getenv("DISPLAY");
+		const char *wayland_display = std::getenv("WAYLAND_DISPLAY");
+		if (!display && !wayland_display) {
+			should_open_browser = false;
+		}
+#endif
+
+		if (should_open_browser) {
+#ifdef _WIN32
+			system(("start \"\" \"" + auth_request_url + "\"").c_str());
+#elif __APPLE__
+			system(("open \"" + auth_request_url + "\"").c_str());
+#elif __linux__
+			system(("xdg-open \"" + auth_request_url + "\"").c_str());
+#endif
+		}
+		std::cout << '\n' << "Waiting for Login via Browser..." << '\n' << '\n';
+		std::cout << auth_request_url << '\n';
+		std::cout << "(This will time out after " << (sheets::kOAuthListenerTimeoutSeconds / 60)
+		          << " minutes if login isn't completed.)" << '\n';
+		if (stdin_interactive) {
+			std::cout << '\n'
+			          << "Alternatively, after logging in, paste the redirect URL " << paste_hint_suffix
+			          << " here and press Enter:" << '\n';
+		}
+	};
+
+	LoginCallbacks callbacks;
+	callbacks.open_browser = open_browser;
+
+	// Lets Ctrl+C cancel a pending login instead of blocking the CLI until
+	// the 5-minute timeout: without this, the listener's blocking accept
+	// loop never yields back to DuckDB's own interrupt/EOF handling.
+	callbacks.is_interrupted = [&context]() {
+		return context.IsInterrupted();
+	};
+
+	// Lets a value be pasted in as an alternative to the local listener
+	// actually receiving the browser's redirect - the only way to complete
+	// this flow when DuckDB runs on a remote/headless host. Left unset
+	// (nullptr) unless stdin is an interactive terminal - see
+	// TryReadPastedLine.
+	if (stdin_interactive) {
+		callbacks.try_read_pasted_input = [](std::string &line) {
+			return sheets::TryReadPastedLine(line);
+		};
+	}
+	return callbacks;
+}
 
 // This code is copied, with minor modifications from
 // https://github.com/duckdb/duckdb_azure/blob/main/src/azure_secret.cpp
@@ -18,7 +139,7 @@ static void CopySecret(const std::string &key, const CreateSecretInput &input, K
 	auto val = input.options.find(key);
 
 	if (val != input.options.end()) {
-		result.secret_map[key] = val->second;
+		result.secret_map[Identifier(key)] = val->second;
 	}
 }
 
@@ -46,19 +167,85 @@ static unique_ptr<BaseSecret> CreateGsheetSecretFromAccessToken(ClientContext &c
 	return std::move(result);
 }
 
+// Exchanges an authorization code for an access_token + refresh_token at
+// Google's token endpoint. Throws IOException on any failure, including a
+// response that (unexpectedly, given access_type=offline&prompt=consent)
+// lacks a refresh_token - a secret that silently can't refresh would be a
+// confusing dead end.
+static sheets::OAuthTokenResponse ExchangeAuthorizationCodeForTokens(sheets::IHttpClient &http, const std::string &code,
+                                                                     const std::string &client_id,
+                                                                     const std::string &client_secret,
+                                                                     const std::string &redirect_uri,
+                                                                     const std::string &code_verifier) {
+	std::string body = "grant_type=authorization_code" + ("&code=" + url_encode(code)) +
+	                   ("&client_id=" + url_encode(client_id)) + ("&client_secret=" + url_encode(client_secret)) +
+	                   ("&redirect_uri=" + url_encode(redirect_uri)) + ("&code_verifier=" + url_encode(code_verifier));
+
+	sheets::OAuthTokenResponse tokenResponse = sheets::PostToTokenEndpoint(http, body, "OAuth token exchange");
+
+	if (tokenResponse.refresh_token.empty()) {
+		throw IOException("Google did not return a refresh_token for this client_id/client_secret. This usually "
+		                  "means this OAuth app was already authorized without one - revoke its access at "
+		                  "https://myaccount.google.com/permissions and try again.");
+	}
+
+	return tokenResponse;
+}
+
 static unique_ptr<BaseSecret> CreateGsheetSecretFromOAuth(ClientContext &context, CreateSecretInput &input) {
 	auto scope = input.scope;
 
 	auto result = make_uniq<KeyValueSecret>(scope, input.type, input.provider, input.name);
 
-	// Initiate OAuth flow
-	string token = InitiateOAuthFlow();
+	std::string client_id = duckdb::sheets::GetStringOption(input.options, "client_id");
+	std::string client_secret = duckdb::sheets::GetStringOption(input.options, "client_secret");
+	std::string refresh_token = duckdb::sheets::GetStringOption(input.options, "refresh_token");
 
-	result->secret_map["token"] = token;
+	if (!refresh_token.empty() && (client_id.empty() || client_secret.empty())) {
+		throw BinderException("refresh_token requires both client_id and client_secret to also be provided");
+	}
+	if (!client_secret.empty() && client_id.empty()) {
+		throw BinderException("client_secret requires client_id to also be provided");
+	}
+
+	std::string effective_client_id = client_id.empty() ? kDefaultOAuthClientId : client_id;
+
+	if (!refresh_token.empty()) {
+		// A refresh_token obtained elsewhere (e.g. from an earlier browser
+		// login on a desktop): no login at all, so this works headless. No
+		// token is stored - OAuthAuth mints the first access token on the
+		// first API call, the same way key_file secrets are only checked
+		// lazily. Marked non-interactive so a revoked refresh_token fails
+		// with an error instead of reopening the browser login (see
+		// CreateAuthFromSecret).
+		result->secret_map["refresh_token"] = refresh_token;
+		result->secret_map["client_id"] = effective_client_id;
+		result->secret_map["client_secret"] = client_secret;
+		result->secret_map["interactive_reauth"] = Value::BOOLEAN(false);
+	} else if (client_secret.empty()) {
+		// Default flow, optionally with a caller-supplied client_id (i.e.
+		// "bring your own OAuth app"): implicit grant, no refresh_token -
+		// unchanged from before these parameters existed.
+		string token = InitiateOAuthFlow(context, effective_client_id);
+		result->secret_map["token"] = token;
+	} else {
+		// Both client_id and client_secret supplied: authorization-code +
+		// PKCE flow, capturing a refresh_token so future queries can
+		// silently reauthenticate via OAuthAuth with no browser interaction.
+		auto http = sheets::CreateHttpClient(context);
+		sheets::OAuthTokenResponse flow_result = RunOAuthCodeFlow(context, *http, effective_client_id, client_secret);
+
+		result->secret_map["token"] = flow_result.access_token;
+		result->secret_map["refresh_token"] = flow_result.refresh_token;
+		result->secret_map["client_id"] = effective_client_id;
+		result->secret_map["client_secret"] = client_secret;
+	}
 
 	// Redact sensible keys
 	RedactCommonKeys(*result);
 	result->redact_keys.insert("token");
+	result->redact_keys.insert("refresh_token");
+	result->redact_keys.insert("client_secret");
 
 	return std::move(result);
 }
@@ -110,7 +297,7 @@ void CreateGsheetSecretFunctions::Register(ExtensionLoader &loader) {
 
 	// Register the new type
 	SecretType secret_type;
-	secret_type.name = type;
+	secret_type.name = Identifier(type);
 	secret_type.deserializer = KeyValueSecret::Deserialize<KeyValueSecret>;
 	secret_type.default_provider = "oauth";
 
@@ -122,6 +309,16 @@ void CreateGsheetSecretFunctions::Register(ExtensionLoader &loader) {
 	// Register the oauth secret provider
 	CreateSecretFunction oauth_function = {type, "oauth", CreateGsheetSecretFromOAuth, {}};
 	oauth_function.named_parameters["use_oauth"] = LogicalType::BOOLEAN;
+	// Optional: bring your own OAuth app. client_id alone still uses the
+	// implicit-grant flow (no refresh_token) with that app instead of the
+	// built-in one; client_id + client_secret together switch to the
+	// authorization-code + PKCE flow and capture a refresh_token - see
+	// CreateGsheetSecretFromOAuth. Adding refresh_token (which requires both)
+	// skips the login entirely and uses that refresh_token as-is - for
+	// headless use.
+	oauth_function.named_parameters["client_id"] = LogicalType::VARCHAR;
+	oauth_function.named_parameters["client_secret"] = LogicalType::VARCHAR;
+	oauth_function.named_parameters["refresh_token"] = LogicalType::VARCHAR;
 	RegisterCommonSecretParameters(oauth_function);
 
 	// Register the key_file secret provider
@@ -137,50 +334,48 @@ void CreateGsheetSecretFunctions::Register(ExtensionLoader &loader) {
 	loader.RegisterFunction(key_file_function);
 }
 
-std::string InitiateOAuthFlow() {
-	// This is using the Web App OAuth flow, as I can't figure out desktop app flow.
-	const std::string client_id = "793766532675-rehqgocfn88h0nl88322ht6d1i12kl4e.apps.googleusercontent.com";
-	const std::string redirect_uri = "https://duckdb-gsheets.com/oauth";
+std::string InitiateOAuthFlow(ClientContext &context, const std::string &client_id) {
+	// Runs a short-lived local HTTP listener so the OAuth redirect can hand back
+	// the access token automatically, without the user having to copy/paste it.
+	const int PORT = 8765;
+	const std::string redirect_uri = "http://localhost:" + std::to_string(PORT);
 	const std::string auth_url = "https://accounts.google.com/o/oauth2/v2/auth";
+	const std::string scope = "https://www.googleapis.com/auth/spreadsheets";
 
-	// Generate a random state for CSRF protection
+	// Generate state for CSRF protection
 	std::string state = generate_random_string(10);
+	std::string auth_request_url = sheets::BuildAuthorizationUrl(auth_url, client_id, redirect_uri, scope, state);
 
-	std::string auth_request_url = auth_url + "?client_id=" + client_id + "&redirect_uri=" + redirect_uri +
-	                               "&response_type=token" + "&scope=https://www.googleapis.com/auth/spreadsheets" +
-	                               "&state=" + state;
+	LoginCallbacks callbacks = PrepareLoginCallbacks(context, auth_request_url, "(or just its access_token)");
 
-	// Instruct the user to visit the URL and grant permission
-	std::cout << "Visit the below URL to authorize DuckDB GSheets" << '\n';
-	std::cout << auth_request_url << '\n';
+	std::lock_guard<std::mutex> port_guard(oauth_local_listener_mutex);
+	return sheets::RunLocalOAuthListener(PORT, state, callbacks.open_browser, /*max_attempts=*/20,
+	                                     callbacks.is_interrupted, callbacks.try_read_pasted_input);
+}
 
-	// Attempt to open the URL in the user's default browser
-	bool should_open_browser = true;
+sheets::OAuthTokenResponse RunOAuthCodeFlow(ClientContext &context, sheets::IHttpClient &http,
+                                            const std::string &client_id, const std::string &client_secret) {
+	const int PORT = 8765;
+	const std::string redirect_uri = "http://localhost:" + std::to_string(PORT);
+	const std::string auth_url = "https://accounts.google.com/o/oauth2/v2/auth";
+	const std::string scope = "https://www.googleapis.com/auth/spreadsheets";
 
-#ifdef __linux__
-	// On Linux, check for headless environment to avoid xdg-open errors
-	const char *display = std::getenv("DISPLAY");
-	const char *wayland_display = std::getenv("WAYLAND_DISPLAY");
-	if (!display && !wayland_display) {
-		should_open_browser = false;
+	std::string state = generate_random_string(10);
+	std::string code_verifier = sheets::GeneratePkceCodeVerifier();
+	std::string code_challenge = sheets::GeneratePkceCodeChallenge(code_verifier);
+	std::string auth_request_url =
+	    sheets::BuildAuthorizationCodeUrl(auth_url, client_id, redirect_uri, scope, state, code_challenge);
+
+	LoginCallbacks callbacks = PrepareLoginCallbacks(context, auth_request_url, "(or just its authorization code)");
+
+	std::string code;
+	{
+		std::lock_guard<std::mutex> port_guard(oauth_local_listener_mutex);
+		code = sheets::RunLocalOAuthCodeListener(PORT, state, callbacks.open_browser, /*max_attempts=*/20,
+		                                         callbacks.is_interrupted, callbacks.try_read_pasted_input);
 	}
-#endif
 
-	if (should_open_browser) {
-#ifdef _WIN32
-		system(("start \"\" \"" + auth_request_url + "\"").c_str());
-#elif __APPLE__
-		system(("open \"" + auth_request_url + "\"").c_str());
-#elif __linux__
-		system(("xdg-open \"" + auth_request_url + "\"").c_str());
-#endif
-	}
-	// Open the URL in the user's default browser
-	std::cout << "After granting permission, enter the token: ";
-	std::string access_token;
-	std::cin >> access_token;
-
-	return access_token;
+	return ExchangeAuthorizationCodeForTokens(http, code, client_id, client_secret, redirect_uri, code_verifier);
 }
 
 } // namespace duckdb
