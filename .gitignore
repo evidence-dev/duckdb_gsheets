@@ -37,3 +37,6 @@ tmp/
 
 # Proxy Configs
 tinyproxy.conf
+
+# SQL tests rewritten for a custom spreadsheet (scripts/test_sql_own_sheet.sh)
+test/sql_own_sheet/

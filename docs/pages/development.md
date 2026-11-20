@@ -17,7 +17,7 @@ duckdb_gsheets/
 ├── test/
 │   ├── sql/                    # SQL logic tests (integration, requires credentials)
 │   └── unit/                   # C++ unit tests (standalone, no credentials needed)
-├── scripts/                    # Dev scripts (test runners, token generation)
+├── scripts/                    # Dev scripts (test runners, token generation, test fixture)
 ├── docs/                       # Documentation site
 ├── .github/workflows/          # CI pipelines
 ├── duckdb/                     # DuckDB submodule
@@ -91,6 +91,22 @@ This script will:
 4. Run `make test` (builds DuckDB + extension, then runs SQL logic tests)
 
 To obtain a key file, create a Google Cloud service account with access to the test spreadsheets and download its JSON key. See [Google's documentation](https://cloud.google.com/iam/docs/keys-create-delete) for details.
+
+**Using your own spreadsheet**
+
+The SQL tests target a shared test spreadsheet. If you don't have edit access to it, you can recreate its fixture in a spreadsheet you own and run the tests against that:
+
+```sh
+export TOKEN=your-token-here
+python3 scripts/create_test_fixture.py <your-spreadsheet-id>
+./scripts/test_sql_own_sheet.sh <your-spreadsheet-id>
+```
+
+`create_test_fixture.py` creates the tabs the tests use (with the same gids) and fills them with the data the tests expect. It clears and rewrites those tabs on every run, so use a spreadsheet dedicated to testing. `test_sql_own_sheet.sh` copies the SQL tests into `test/sql_own_sheet/` (gitignored) with your spreadsheet ID substituted, then runs them. Set `KEY_FILE_PATH` as well to include the key file tests; the service account needs edit access to your spreadsheet.
+
+Google limits Sheets API reads to 60 per minute per user, and a full test run exceeds that, so later tests can fail with `Google Sheets API error (429)`. Set `PAUSE_SECONDS=70` to run the test files one at a time with a pause between them.
+
+The fixture is reconstructed from the test expectations. If `types.test` fails, compare its output with the expected values: it checks how Google displays extreme values, which can depend on the spreadsheet's locale.
 
 ## CI Pipeline
 
