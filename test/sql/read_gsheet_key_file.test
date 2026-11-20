@@ -20,7 +20,7 @@ statement ok
 create secret test_secret (
     type gsheet, 
     provider key_file, 
-    filepath '${KEY_FILE_PATH}'
+    filepath '{KEY_FILE_PATH}'
 );
 
 # Confirm the key_file works
