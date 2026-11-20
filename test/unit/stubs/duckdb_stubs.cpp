@@ -9,8 +9,8 @@ Exception::Exception(ExceptionType exception_type, const string &message)
     : std::runtime_error(message) {
 }
 
-Exception::Exception(ExceptionType exception_type, const string &message,
-                     const unordered_map<string, string> &extra_info)
+Exception::Exception(const unordered_map<string, string> &extra_info, ExceptionType exception_type,
+                     const string &message)
     : std::runtime_error(message) {
 }
 
@@ -21,8 +21,8 @@ string Exception::ExceptionTypeToString(ExceptionType type) {
 IOException::IOException(const string &msg) : Exception(ExceptionType::IO, msg) {
 }
 
-IOException::IOException(const string &msg, const unordered_map<string, string> &extra_info)
-    : Exception(ExceptionType::IO, msg, extra_info) {
+IOException::IOException(const unordered_map<string, string> &extra_info, const string &msg)
+    : Exception(extra_info, ExceptionType::IO, msg) {
 }
 
 } // namespace duckdb

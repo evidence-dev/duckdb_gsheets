@@ -11,7 +11,7 @@ statement ok
 create secret test_secret (
     type gsheet, 
     provider access_token, 
-    token '${TOKEN}'
+    token '{TOKEN}'
 );
 
 # Create a table to copy to Google Sheet

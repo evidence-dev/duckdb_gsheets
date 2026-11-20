@@ -12,7 +12,7 @@ statement ok
 create secret test_secret (
     type gsheet,
     provider access_token,
-    token '${TOKEN}'
+    token '{TOKEN}'
 );
 
 # Test the easy types

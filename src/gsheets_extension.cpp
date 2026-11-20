@@ -34,12 +34,12 @@ unique_ptr<TableRef> ReadSheetReplacement(ClientContext &context, ReplacementSca
 	}
 	auto table_function = make_uniq<TableFunctionRef>();
 	vector<unique_ptr<ParsedExpression>> children;
-	children.push_back(make_uniq<ConstantExpression>(Value(table_name)));
+	children.push_back(ConstantExpression::String(table_name));
 	table_function->function = make_uniq<FunctionExpression>("read_gsheet", std::move(children));
 
 	if (!FileSystem::HasGlob(table_name)) {
 		auto &fs = FileSystem::GetFileSystem(context);
-		table_function->alias = fs.ExtractBaseName(table_name);
+		table_function->alias = Identifier(fs.ExtractBaseName(table_name));
 	}
 
 	return std::move(table_function);
@@ -53,10 +53,11 @@ static void LoadInternal(ExtensionLoader &loader) {
 
 	// Register read_gsheet table function
 	TableFunction read_gsheet_function("read_gsheet", {LogicalType::VARCHAR}, ReadSheetFunction, ReadSheetBind);
-	read_gsheet_function.named_parameters["header"] = LogicalType::BOOLEAN;
-	read_gsheet_function.named_parameters["sheet"] = LogicalType::VARCHAR;
-	read_gsheet_function.named_parameters["range"] = LogicalType::VARCHAR;
-	read_gsheet_function.named_parameters["all_varchar"] = LogicalType::BOOLEAN;
+	read_gsheet_function.GetSignature()
+	    .AddKeywordOnly("header", LogicalType::BOOLEAN, Value(LogicalType::BOOLEAN))
+	    .AddKeywordOnly("sheet", LogicalType::VARCHAR, Value(LogicalType::VARCHAR))
+	    .AddKeywordOnly("range", LogicalType::VARCHAR, Value(LogicalType::VARCHAR))
+	    .AddKeywordOnly("all_varchar", LogicalType::BOOLEAN, Value(LogicalType::BOOLEAN));
 
 	GSheetCopyFunction gsheet_copy_function;
 

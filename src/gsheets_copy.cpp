@@ -25,11 +25,18 @@ GSheetCopyFunction::GSheetCopyFunction() : CopyFunction("gsheet") {
 	copy_to_initialize_global = GSheetWriteInitializeGlobal;
 	copy_to_initialize_local = GSheetWriteInitializeLocal;
 	copy_to_sink = GSheetWriteSink;
+	copy_to_combine = GSheetWriteCombine;
+	copy_to_finalize = GSheetWriteFinalize;
 }
 
 unique_ptr<FunctionData> GSheetCopyFunction::GSheetWriteBind(ClientContext &context, CopyFunctionBindInput &input,
-                                                             const vector<string> &names,
+                                                             const vector<Identifier> &identifiers,
                                                              const vector<LogicalType> &sql_types) {
+
+	vector<string> names;
+	for (const auto &identifier : identifiers) {
+		names.push_back(identifier.GetIdentifierName());
+	}
 
 	string file_path = input.info.file_path;
 	auto options = input.info.options;
@@ -179,4 +186,13 @@ void GSheetCopyFunction::GSheetWriteSink(ExecutionContext &context, FunctionData
 	}
 	client.Spreadsheets(gstate.spreadsheet_id).Values().Append(sheets::A1Range(range_str), data);
 }
+// Sink writes each chunk straight to the sheet, so combine and finalize have nothing left to do
+void GSheetCopyFunction::GSheetWriteCombine(ExecutionContext &context, FunctionData &bind_data,
+                                            GlobalFunctionData &gstate, LocalFunctionData &lstate) {
+}
+
+void GSheetCopyFunction::GSheetWriteFinalize(ClientContext &context, FunctionData &bind_data,
+                                             GlobalFunctionData &gstate) {
+}
+
 } // namespace duckdb

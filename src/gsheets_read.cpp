@@ -84,7 +84,7 @@ void ReadSheetFunction(ClientContext &context, TableFunctionInput &data_p, DataC
 }
 
 unique_ptr<FunctionData> ReadSheetBind(ClientContext &context, TableFunctionBindInput &input,
-                                       vector<LogicalType> &return_types, vector<string> &names) {
+                                       vector<LogicalType> &return_types, vector<Identifier> &names) {
 	auto sheet_input = input.inputs[0].GetValue<string>();
 
 	// Flags
@@ -112,6 +112,10 @@ unique_ptr<FunctionData> ReadSheetBind(ClientContext &context, TableFunctionBind
 
 	// Parse named parameters
 	for (auto &kv : input.named_parameters) {
+		// Parameters the caller left out are filled with NULL defaults
+		if (kv.second.IsNull()) {
+			continue;
+		}
 		if (kv.first == "header") {
 			try {
 				header = kv.second.GetValue<bool>();
@@ -217,7 +221,7 @@ unique_ptr<FunctionData> ReadSheetBind(ClientContext &context, TableFunctionBind
 		if (header && (i < values[0].size())) {
 			column_name = values[0][i];
 		}
-		names.push_back(column_name);
+		names.push_back(Identifier(column_name));
 
 		// If the first row has blanks, assume varchar for now
 		if (i >= first_data_row.size() || use_all_varchars) {

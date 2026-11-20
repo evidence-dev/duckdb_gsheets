@@ -35,9 +35,9 @@ jobs:
   duckdb-stable-build:
     needs: sql-tests
     name: Build extension binaries
-    uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@main
+    uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@v2.0-cyanoptera
     with:
-      duckdb_version: v1.4-andium
-      ci_tools_version: main
+      duckdb_version: v2.0.1
+      ci_tools_version: v2.0-cyanoptera
       extension_name: gsheets
       exclude_archs: "windows_amd64_rtools"
